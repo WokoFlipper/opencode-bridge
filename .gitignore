@@ -1,0 +1,40 @@
+# --- Секреты и личные данные (НИКОГДА не коммитить) ---
+bridge/config.json          # личные пути/прокси; создаётся из config.example.json
+bridge/certs/               # TLS-ключи моста и iroh-ключ
+bridge/pairings.json        # токены доверенных устройств
+bridge/internet.json        # состояние p2p-доступа
+bridge/certs/tunnel-allow.txt
+*.pem
+*.key
+*.keystore
+*.jks
+
+# --- Node ---
+node_modules/
+npm-debug.log*
+
+# --- Android ---
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/app/release/
+*.apk
+*.aab
+
+# --- Rust (туннель) ---
+tunnel/target/
+
+# --- Собранные нативные бинарники (собираются из исходников) ---
+bridge/bin/
+android/app/src/main/jniLibs/
+
+# --- Инструменты/отчёты/агенты ---
+.claude/
+.claude-ide/
+CLAUDE-SECURITY-*/
+
+# --- Прочее ---
+*.slojka
+.DS_Store
+*.log

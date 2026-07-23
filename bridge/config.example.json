@@ -1,0 +1,14 @@
+{
+  "port": 8790,
+  "host": "0.0.0.0",
+  "claudeCommand": "claude",
+  "claudeArgs": [],
+  "defaultCwd": "",
+  "projects": [],
+  "env": {},
+  "scrollbackBytes": 1048576,
+  "mdnsName": "claude-bridge",
+  "sttPython": "python3",
+  "sttModel": "large-v3",
+  "sttLanguage": "en"
+}
