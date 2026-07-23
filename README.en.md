@@ -21,16 +21,16 @@ No cloud, no middlemen: the phone talks directly to your PC — over your LAN, o
 
 `Claude Bridge` runs a lightweight Node.js bridge on your computer that mirrors Claude Code terminal sessions to an Android app. From your phone you see the same terminal as on the PC, type text and commands, switch sessions, answer permission prompts — and get push notifications when Claude is waiting for you or has finished.
 
-All communication is **direct between your own devices**. On WiFi it's your LAN; away from home it's an encrypted p2p tunnel (iroh/QUIC) with no relay servers in between. Traffic is protected by TLS with certificate pinning; access is granted via one‑time pairing.
+All communication is **direct between your own devices**. On WiFi it's your LAN; away from home it's an encrypted p2p tunnel (iroh/QUIC) with no relay servers in between. Traffic is protected by TLS with certificate pinning; access is granted via one-time pairing.
 
 ### Features
 
-- 📱 **Full terminal on the phone** — xterm.js in a WebView: input, arrows, Esc/Tab/Ctrl‑C, touch scroll & selection, clipboard paste.
+- 📱 **Full terminal on the phone** — xterm.js in a WebView: input, arrows, Esc/Tab/Ctrl-C, touch scroll & selection, clipboard paste.
 - 🔀 **Multiple sessions** — tabs, switching, new sessions (`--resume`, `--dangerously-skip-permissions`), multiple paired PCs.
-- 🔔 **Push notifications from hooks** — "Claude is waiting", "Claude finished", with quick‑reply buttons from the notification shade.
+- 🔔 **Push notifications from hooks** — "Claude is waiting", "Claude finished", with quick-reply buttons from the notification shade.
 - 🌐 **Works away from home** — if the PC isn't visible on WiFi, a p2p tunnel (iroh) is brought up automatically, LAN always preferred.
-- 🎙️ **Voice input** — dictate messages (faster‑whisper on the PC), optional.
-- 🔒 **Privacy & security** — self‑signed TLS + fingerprint pinning, QR/code pairing, biometric app lock, `FLAG_SECURE`, tokens only on trusted devices.
+- 🎙️ **Voice input** — dictate messages (faster-whisper on the PC), optional.
+- 🔒 **Privacy & security** — self-signed TLS + fingerprint pinning, QR/code pairing, biometric app lock, `FLAG_SECURE`, tokens only on trusted devices.
 - 💾 **Sessions survive everything** — keeper processes own the PTYs independently of the bridge: restarting the bridge or closing the app doesn't kill Claude's work.
 
 > A deep technical description of the architecture lives in [ARCHITECTURE.md](ARCHITECTURE.md) (in Russian).
@@ -73,7 +73,7 @@ npm start
 
 On first run the bridge:
 - creates `config.json` from `config.example.json`;
-- generates a self‑signed TLS certificate in `bridge/certs/`;
+- generates a self-signed TLS certificate in `bridge/certs/`;
 - prints a **QR code and pairing code** for the phone.
 
 Then edit `bridge/config.json` (see [Configuration](#configuration)) and optionally install it as a systemd service (below).
@@ -121,7 +121,7 @@ systemctl --user enable --now claude-bridge
 
 ### 2. Android app
 
-Easiest: **download the prebuilt APK** from [Releases](https://github.com/HelpFreedom/claude-bridge/releases) and install it (allow installs from unknown sources). The APK is debug‑signed.
+Easiest: **download the prebuilt APK** from [Releases](https://github.com/HelpFreedom/claude-bridge/releases) and install it (allow installs from unknown sources). The APK is debug-signed.
 
 Or build it yourself:
 
@@ -131,7 +131,7 @@ cd android
 # APK: android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-For the p2p tunnel on the phone you also need the native `libclaudetunnel.so` (aarch64) — see [Building the tunnel for Android](#building-the-tunnel-for-android). Everything except away‑from‑home access works without it.
+For the p2p tunnel on the phone you also need the native `libclaudetunnel.so` (aarch64) — see [Building the tunnel for Android](#building-the-tunnel-for-android). Everything except away-from-home access works without it.
 
 ### 3. Pairing
 
@@ -152,13 +152,30 @@ You can also type a short code manually — the app will then ask you to verify 
 | `port` | Bridge port (default `8790`). |
 | `host` | Listen interface (`0.0.0.0` = whole LAN). |
 | `claudeCommand` | Command to launch Claude Code (usually `claude`). |
-| `projects` | **Allow‑list of directories** where the phone may start sessions. Empty = the phone can't create sessions outside `defaultCwd`. |
+| `projects` | **Allow-list of directories** where the phone may start sessions. Empty = the phone can't create sessions outside `defaultCwd`. |
 | `defaultCwd` | Default directory for new sessions. |
-| `env` | Extra environment variables for sessions (e.g. API proxies). |
+| `env` | Extra environment variables for Claude Code sessions (e.g. an API proxy — see below). |
 | `scrollbackBytes` | Terminal scrollback buffer size. |
-| `sttPython` / `sttModel` / `sttLanguage` | Voice input settings (faster‑whisper). |
+| `sttPython` / `sttModel` / `sttLanguage` | Voice input settings (faster-whisper). |
 
-> ⚠️ `config.json` is in `.gitignore` — it holds your personal paths and environment and **must not** be committed.
+> ⚠️ `config.json` is in `.gitignore`: it holds **your own** paths and environment (different for everyone), so it must not be committed. Edit `config.json` (created from `config.example.json` on first run), not the example.
+
+### Proxy for Claude Code (optional)
+
+If `claude` must reach the Anthropic API through a proxy, put it in `env` — the bridge passes these variables to every session it launches:
+
+```json
+"env": {
+  "HTTP_PROXY":  "http://127.0.0.1:8118",
+  "HTTPS_PROXY": "http://127.0.0.1:10808",
+  "http_proxy":  "http://127.0.0.1:8118",
+  "https_proxy": "http://127.0.0.1:10808",
+  "NO_PROXY":    "127.0.0.1,localhost,192.168.0.0/16",
+  "no_proxy":    "127.0.0.1,localhost,192.168.0.0/16"
+}
+```
+
+Use your own proxy addresses. `NO_PROXY` keeps localhost and the local network unproxied (so the bridge↔phone link stays direct). Alternatively, export these variables in the bridge's own environment (shell or `systemd` unit): the bridge inherits them and passes them on. An explicit `env` entry is more robust.
 
 ### Voice input (optional)
 
@@ -184,13 +201,13 @@ claude-mobile --qr         # show the pairing QR code
 claude-mobile -h           # help
 ```
 
-`Ctrl+\` detaches (the session keeps running). To end a session: exit Claude (double `Ctrl+C` or `/exit`) or long‑press its tab in the app.
+`Ctrl+\` detaches (the session keeps running). To end a session: exit Claude (double `Ctrl+C` or `/exit`) or long-press its tab in the app.
 
 ---
 
 ## Building the tunnel for Android
 
-The native library is cross‑compiled for aarch64 via the Android NDK:
+The native library is cross-compiled for aarch64 via the Android NDK:
 
 ```bash
 rustup target add aarch64-linux-android
@@ -214,12 +231,12 @@ Then rebuild the APK (`./gradlew assembleDebug`).
 ## Security
 
 - **TLS + fingerprint pinning**: the phone trusts only your PC's specific certificate; the fingerprint also serves as the PC's identity.
-- **Pairing**: a one‑time 40‑bit code with a global attempt limit; the QR path pins the fingerprint before any secret is sent.
+- **Pairing**: a one-time 40-bit code with a global attempt limit; the QR path pins the fingerprint before any secret is sent.
 - **Access tokens** are issued only to paired devices; revocation is immediate (drops live connections).
-- **Local access** (`claude-mobile`, hooks) is trusted by same‑user UID, not "anyone on loopback".
+- **Local access** (`claude-mobile`, hooks) is trusted by same-user UID, not "anyone on loopback".
 - **On the phone**: biometric lock, `FLAG_SECURE` (no previews/screenshots), the token never leaves the native layer.
 
-This project has been through several security reviews; some findings were fixed, others are deliberate trade‑offs for its threat model (self‑hosting for yourself). Don't treat it as a multi‑tenant service.
+This project has been through several security reviews; some findings were fixed, others are deliberate trade-offs for its threat model (self-hosting for yourself). Don't treat it as a multi-tenant service.
 
 ---
 
