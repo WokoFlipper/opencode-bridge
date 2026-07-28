@@ -11,7 +11,7 @@
 [![Platform](https://img.shields.io/badge/ПК-Linux-informational)](#требования)
 [![Android](https://img.shields.io/badge/Телефон-Android%208%2B-green)](#2-android-приложение)
 
-🇷🇺 Русский · [🇬🇧 English](README.en.md)
+🇷🇺 Русский · [🇬🇧 English](README.en.md) · [Video](https://www.youtube.com/watch?v=x_AXmmRxF9E)
 
 Поддержать меня можно на Boosty: https://boosty.to/triangle_black/
 
