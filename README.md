@@ -13,6 +13,8 @@
 
 🇷🇺 Русский · [🇬🇧 English](README.en.md)
 
+Поддержать меня можно на Boosty: https://boosty.to/triangle_black/
+
 </div>
 
 ---
