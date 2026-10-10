@@ -1,8 +1,8 @@
 {
-  "name": "claude-bridge",
+  "name": "opencode-bridge",
   "version": "0.1.0",
   "private": true,
-  "description": "LAN bridge: mirror and control local Claude Code sessions from a phone",
+  "description": "LAN bridge: mirror and control local opencode sessions from a phone (fork of claude-bridge)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

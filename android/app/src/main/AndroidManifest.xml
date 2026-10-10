@@ -16,12 +16,12 @@
          подтвердить владение может только приложение, подписанное нашим ключом
          (т.е. только мы). Закрывает подделку ACTION_STATE чужим приложением на API<33. -->
     <permission
-        android:name="com.q.claudebridge.permission.INTERNAL"
+        android:name="com.q.opencodebridge.permission.INTERNAL"
         android:protectionLevel="signature" />
-    <uses-permission android:name="com.q.claudebridge.permission.INTERNAL" />
+    <uses-permission android:name="com.q.opencodebridge.permission.INTERNAL" />
 
     <application
-        android:label="Claude Bridge"
+        android:label="OpenCode Mobile"
         android:icon="@mipmap/ic_launcher"
         android:networkSecurityConfig="@xml/network_security_config"
         android:allowBackup="false"

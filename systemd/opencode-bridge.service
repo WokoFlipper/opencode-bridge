@@ -1,0 +1,17 @@
+[Unit]
+Description=OpenCode Bridge (mirror opencode sessions to phone)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/projects/opencode-bridge/bridge
+ExecStart=/usr/bin/node %h/projects/opencode-bridge/bridge/server.js
+Restart=on-failure
+RestartSec=3
+# Убивать только сам мост: хранители сессий должны переживать рестарт.
+# Без этого флага systemd убьёт и keeper-ы, и живые сессии opencode.
+KillMode=process
+Environment=PATH=%h/.local/bin:%h/.local/share/mise/shims:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=default.target

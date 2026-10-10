@@ -1,4 +1,4 @@
-package com.q.claudebridge;
+package com.q.opencodebridge;
 
 import android.content.Context;
 import android.content.SharedPreferences;
@@ -22,7 +22,7 @@ public final class BridgeStore {
     public static class Bridge {
         public String name;       // имя ПК (hostname)
         public String host;       // последний известный адрес в LAN
-        public int port = 8790;
+        public int port = 8890;
         public String token;      // токен доступа этого телефона
         public String fp;         // отпечаток сертификата = id компьютера
         public boolean internet;  // разрешён коннект через интернет (p2p)
@@ -40,7 +40,7 @@ public final class BridgeStore {
             Bridge b = new Bridge();
             b.name = j.optString("name", "компьютер");
             b.host = j.optString("host", null);
-            b.port = j.optInt("port", 8790);
+            b.port = j.optInt("port", 8890);
             b.token = j.optString("token", null);
             b.fp = j.optString("fp", null);
             b.internet = j.optBoolean("internet", false);
@@ -65,7 +65,7 @@ public final class BridgeStore {
         Bridge b = new Bridge();
         b.host = prefs.getString("host", null);
         b.name = b.host != null ? b.host : "компьютер";
-        b.port = prefs.getInt("port", 8790);
+        b.port = prefs.getInt("port", 8890);
         b.token = token;
         b.fp = fp;
         List<Bridge> list = new ArrayList<>();

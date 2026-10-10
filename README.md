@@ -1,19 +1,15 @@
 <div align="center">
 
-<img src="assets/hero.jpg" alt="Claude Bridge — управляй Claude Code из любой точки, без серверов" width="820">
+# OpenCode Bridge
 
-# Claude Bridge
-
-**Зеркалируй и управляй своими сессиями [Claude Code](https://claude.com/claude-code) со смартфона.**
+**Зеркаль и управляй своими сессиями [opencode](https://opencode.ai) со смартфона.**
 Никаких облаков и посредников: телефон общается напрямую с твоим ПК — по локальной сети или через p2p-туннель, когда ты вне дома.
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/ПК-Linux-informational)](#требования)
-[![Android](https://img.shields.io/badge/Телефон-Android%208%2B-green)](#2-android-приложение)
+[![Android](https://img.shields.io/badge/Телефон-Android%208%2B-green)](#установка-приложения-на-телефон)
 
-🇷🇺 Русский · [🇬🇧 English](README.en.md) · [Video](https://www.youtube.com/watch?v=x_AXmmRxF9E)
-
-Поддержать меня можно на Boosty: https://boosty.to/triangle_black/
+🇷🇺 Русский · [🇬🇧 English](README.en.md)
 
 </div>
 
@@ -21,21 +17,43 @@
 
 ## Что это
 
-`Claude Bridge` поднимает на твоём компьютере лёгкий мост (Node.js), который «отражает» терминальные сессии Claude Code на Android-приложение. С телефона ты видишь тот же терминал, что и на ПК, вводишь текст и команды, переключаешь сессии, отвечаешь на запросы разрешений — и получаешь push-уведомления, когда Claude ждёт ответа или закончил работу.
+`OpenCode Bridge` — форк [`HelpFreedom/claude-bridge`](https://github.com/HelpFreedom/claude-bridge), пересобранный под TUI-сессии `opencode`. На твоём компьютере поднимается лёгкий мост (Node.js), который «отражает» терминальные сессии opencode на Android-приложение «OpenCode Mobile». С телефона ты видишь тот же терминал, что и на ПК, вводишь текст и команды, переключаешь сессии, отвечаешь на запросы разрешений — и получаешь push-уведомления, когда opencode ждёт ответа или закончил работу.
 
-Всё общение идёт **напрямую между твоими устройствами**. По WiFi это локальная сеть; вне дома — зашифрованный p2p-туннель (iroh/QUIC) без промежуточных серверов. Трафик защищён TLS с пиннингом сертификата, доступ — по одноразовому сопряжению.
+Всё общение идёт **напрямую между твоими устройствами**. По WiFi это локальная сеть; вне дома — зашифрованный p2p-туннель (iroh/QUIC) без промежуточных серверов и без белого IP. Трафик защищён TLS с пиннингом сертификата, доступ — по одноразовому сопряжению: сопрягся раз — работает из любой сети.
+
+Алгоритм связи и принципы безопасности автора сохранены 1:1 — менялись только имена, порты и точки интеграции с агентом.
 
 ### Ключевые возможности
 
 - 📱 **Полный терминал на телефоне** — xterm.js в WebView: ввод, стрелки, Esc/Tab/Ctrl-C, прокрутка и выделение пальцем, вставка из буфера.
-- 🔀 **Несколько сессий** — вкладки, переключение, запуск новых (`--resume`, `--dangerously-skip-permissions`), несколько сопряжённых ПК.
-- 🔔 **Push-уведомления из hooks** — «Claude ждёт подтверждения», «Claude закончил» с кнопками быстрого ответа прямо из шторки.
+- 🔀 **Несколько сессий** — вкладки, переключение, запуск новых (`--continue`, `--fork`), несколько сопряжённых ПК.
+- 🔔 **Push-уведомления из плагина** — «opencode ждёт подтверждения», «opencode завершил ответ» с кнопками быстрого ответа прямо из шторки.
 - 🌐 **Работа вне дома** — если ПК не виден в WiFi, автоматически поднимается p2p-туннель (iroh) с приоритетом LAN.
 - 🎙️ **Голосовой ввод** — надиктовка сообщений (faster-whisper на ПК), опционально.
 - 🔒 **Приватность и безопасность** — самоподписанный TLS + пиннинг отпечатка, сопряжение по QR/коду, биометрический замок приложения, `FLAG_SECURE`, токены только у доверенных устройств.
-- 💾 **Сессии переживают всё** — процессы-хранители держат PTY независимо от моста: перезапуск моста или закрытие приложения не убивает работу Claude.
+- 💾 **Сессии переживают всё** — процессы-хранители держат PTY независимо от моста: перезапуск моста или закрытие приложения не убивает работу opencode.
 
-> Подробное техническое описание архитектуры — в [ARCHITECTURE.md](ARCHITECTURE.md).
+> Подробное техническое описание архитектуры оригинала — в [ARCHITECTURE.md](ARCHITECTURE.md). Чем форк отличается — в [FORK.md](FORK.md).
+
+---
+
+## Чем отличается от оригинала
+
+| Было (`claude-bridge`) | Стало (`opencode-bridge`) |
+|---|---|
+| Порты `8790` HTTPS/WSS, `8791` UDP, `8792` туннель | `8890` / `8891` / `8892` — оба моста живут рядом |
+| `~/.claude-bridge/sessions/` | `~/.opencode-bridge/sessions/` |
+| `CLAUDE_BRIDGE_SESSION` / `CLAUDE_BRIDGE_PORT` / `CLAUDE_BRIDGE_URL` | `OPENCODE_BRIDGE_SESSION` / `OPENCODE_BRIDGE_PORT` / `OPENCODE_BRIDGE_URL` (старые имена читаются как fallback) |
+| `config: claudeCommand/claudeArgs` | `config: opencodeCommand/opencodeArgs` (старые ключи — fallback) |
+| CLI `claude-mobile`, бинарь по умолчанию `claude` | `bridge/opencode-mobile`, бинарь `opencode` |
+| Новая сессия из Web UI: `--resume`, `--dangerously-skip-permissions` | `--continue`, `--fork` |
+| Хуки Claude Code (`settings.json`) | Плагин-шим `plugin/opencode-bridge.ts` (события `session.idle` / `session.status` / `permission.asked` / `tui.toast.show` → тот же `POST /hook`) |
+| `bridge-hook.sh` на `$CLAUDE_BRIDGE_*` | Тот же скрипт, на `$OPENCODE_BRIDGE_*` (старые переменные — fallback) |
+| mDNS-сервис `claude-bridge`, UDP-магия `CLAUDE_BRIDGE?`, QR `{cb:1,…}` | `opencode-bridge`, `OPENCODE_BRIDGE?`, `{ob:1,…}` (приём понимает и старые имена) |
+| CN сертификата `claude-bridge` | `opencode-bridge` (сертификат генерируется заново — телефон сопрягается заново) |
+| Приложение «Claude Bridge», иконка с логотипом автора | Приложение «OpenCode Mobile», своя иконка (фиолетовое свечение, жёлтая антенна) |
+
+Без изменений: TLS-пиннинг, pairing-код 10 мин/одноразовый/throttle, `isLocal` по UID (fail-closed), права `0600/0700`, keeper-протокол и переживание рестарта, WS-протокол, scrollback, rate-limits, xterm UI, `stt.py`, CSP-заголовки.
 
 ---
 
@@ -44,31 +62,34 @@
 ```
 ┌─────────────────── ПК (Linux) ───────────────────┐        ┌──────── Телефон (Android) ────────┐
 │                                                   │        │                                   │
-│  Claude Code #1 (PTY) ┐                           │        │   WebView + xterm.js              │
-│  Claude Code #2 (PTY) ┼─ keeper.js (хранители)    │  WSS   │   • терминал, вкладки, голос      │
-│  Claude Code #3 (PTY) ┘        │                  │◀──────▶│   • foreground-сервис             │
-│                                │                  │ TLS +  │   • push-уведомления              │
-│  hooks ─┐                      ▼                  │ пиннинг│                                   │
-│         └──▶ server.js (мост, порт 8790) ─────────┼────────┤   Обнаружение: mDNS + UDP-маяк    │
-│              node-pty · WebSocket · mDNS          │        │   Вне дома: p2p-туннель (iroh)    │
+│  opencode #1 (PTY) ┐                              │        │   WebView + xterm.js              │
+│  opencode #2 (PTY) ┼─ keeper.js (хранители)       │  WSS   │   • терминал, вкладки, голос      │
+│  opencode #3 (PTY) ┘        │                     │◀──────▶│   • foreground-сервис             │
+│                             │                     │ TLS +  │   • push-уведомления              │
+│  plugin-шим ─┐              ▼                     │ пиннинг│                                   │
+│              └──▶ server.js (мост, порт 8890) ────┼────────┤   Обнаружение: mDNS + UDP-маяк    │
+│                   node-pty · WebSocket · mDNS     │        │   Вне дома: p2p-туннель (iroh)    │
 └───────────────────────────────────────────────────┘        └───────────────────────────────────┘
 ```
 
 1. Телефон сам находит ПК в сети (mDNS/UDP) и подключается.
 2. Ввод/вывод терминала идут в обе стороны по WebSocket поверх TLS.
-3. Hooks Claude Code превращаются в push-уведомления на телефоне.
+3. События плагина opencode превращаются в push-уведомления на телефоне.
+4. Вне дома обе стороны выходят на relay iroh (исходящие соединения, NAT пробивается автоматически), дальше — прямое p2p или через relay.
 
 ---
 
 ## Требования
 
 **ПК (мост):**
-- Linux (проверено на Debian; ожидаемо работает на большинстве дистрибутивов)
+- Linux (проверено на Arch; ожидаемо работает на большинстве дистрибутивов)
 - [Node.js](https://nodejs.org/) 18+
-- Установленный и работающий [Claude Code](https://claude.com/claude-code) (`claude` в `PATH`)
+- Установленный и работающий [opencode](https://opencode.ai) (`opencode` в `PATH`)
 - *(опционально)* [Rust](https://rustup.rs/) — для сборки p2p-туннеля
 - *(опционально)* Python 3.11 + [`faster-whisper`](https://github.com/SYSTRAN/faster-whisper) — для голосового ввода
 - *(опционально)* Avahi/mDNS — ускоряет обнаружение (есть резервный UDP-маяк)
+
+**Сколько надо VPS:** сам мост ест ~70 МБ RAM. Без голоса хватает **1 ГБ RAM / 1 vCPU** (2 ГБ — с комфортом на 3–5 сессий). С голосовым вводом (`large-v3`) нужно **4 ГБ** (модель ~2.5 ГБ в памяти) либо модель `small` — тогда хватит 2 ГБ. Диск: ~200 МБ без STT-моделей.
 
 **Телефон:**
 - Android 8.0+ (API 26)
@@ -80,10 +101,10 @@
 ### 1. Мост на ПК
 
 ```bash
-git clone https://github.com/HelpFreedom/claude-bridge.git
-cd claude-bridge/bridge
+git clone <этот-репозиторий> opencode-bridge
+cd opencode-bridge/bridge
 npm install
-npm start
+node server.js
 ```
 
 При первом запуске мост:
@@ -91,72 +112,72 @@ npm start
 - сгенерирует самоподписанный TLS-сертификат в `bridge/certs/`;
 - напечатает **QR-код и код сопряжения** для телефона.
 
-Дальше отредактируй `bridge/config.json` под себя (см. [Настройка](#настройка)) и, при желании, установи как systemd-сервис (см. ниже).
+Дальше отредактируй `bridge/config.json` под себя (см. [Настройка](#настройка)).
 
-#### (Опционально) p2p-туннель для доступа вне дома
+> ⚠️ Если на ПК активен файрвол (UFW), открой порты моста, иначе телефон будет видеть адрес, но TCP упрётся в таймаут:
+>
+> ```bash
+> sudo ufw allow 8890/tcp
+> sudo ufw allow 8891/udp
+> ```
 
-Туннель — отдельный бинарник на Rust. Собери его и положи рядом с мостом:
-
-```bash
-cd tunnel
-cargo build --release
-mkdir -p ../bridge/bin
-cp target/release/claude-tunnel ../bridge/bin/claude-tunnel
-```
-
-Включается позже из приложения (в меню ПК → «разрешить через интернет») или командой `claude-mobile --device` → `i`.
-
-#### (Опционально) systemd-сервис — чтобы мост стартовал сам
-
-Создай `~/.config/systemd/user/claude-bridge.service`:
-
-```ini
-[Unit]
-Description=Claude Bridge
-After=network.target
-
-[Service]
-Type=simple
-WorkingDirectory=%h/claude-bridge/bridge
-ExecStart=/usr/bin/node %h/claude-bridge/bridge/server.js
-Restart=on-failure
-RestartSec=3
-# Убивать только сам мост: хранители сессий должны переживать рестарт
-KillMode=process
-Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
-
-[Install]
-WantedBy=default.target
-```
+Для отладки с QR на глазах удобно держать мост в видимом окне терминала:
 
 ```bash
-systemctl --user daemon-reload
-systemctl --user enable --now claude-bridge
+bridge/start-foot.sh   # окно foot + лог в bridge/bridge.log, при падении окно не закрывается
 ```
 
-> `%h` — домашний каталог. Поправь путь, если склонировал в другое место.
+### 2. Плагин уведомлений (push idle/waiting)
 
-### 2. Android-приложение
-
-Проще всего — **скачать готовый APK** из [Releases](https://github.com/HelpFreedom/claude-bridge/releases) и установить (нужно разрешить установку из неизвестных источников). APK подписан отладочным ключом.
-
-Либо собрать самому:
+`POST /hook` моста кормит шим-плагин:
 
 ```bash
-cd android
-./gradlew assembleDebug
-# APK: android/app/build/outputs/apk/debug/app-debug.apk
+mkdir -p ~/.config/opencode/plugin
+cp <репо>/plugin/opencode-bridge.ts ~/.config/opencode/plugin/
+# рестарт opencode; переменные OPENCODE_BRIDGE_* прокинет keeper каждой сессии
 ```
 
-Для работы p2p-туннеля на телефоне нужна нативная библиотека `libclaudetunnel.so` (aarch64) — см. [Сборка туннеля под Android](#сборка-туннеля-под-android). Без неё всё, кроме доступа вне дома, работает.
+Маппинг событий:
 
-### 3. Сопряжение
+| opencode | мост | Телефон видит |
+|---|---|---|
+| `session.idle` | `Stop` / idle | «завершил ответ» |
+| `session.status` | `UserPromptSubmit` / working | гасит устаревшие уведомления |
+| `permission.asked`, `tui.toast.show` | `Notification` / waiting | «ждёт подтверждения» |
 
-1. Запусти мост на ПК — он покажет QR-код (или выполни `claude-mobile --qr`).
-2. В приложении нажми **«Добавить компьютер» → «Сканировать QR-код»** и наведи камеру.
+Таймаут 2 с, ошибки глотаются — плагин никогда не ломает сессию.
+
+### 3. Установка приложения на телефон
+
+Возьми APK из [Releases](../../releases) (`opencode-bridge-*.apk`, подпись debug-ключом, как у оригинала) и установи (разреши установку из неизвестных источников). Либо собери сам — см. [Сборка](#сборка-android-и-туннеля).
+
+### 4. Сопряжение
+
+1. Запусти мост на ПК — он покажет QR-код (или выполни `bridge/opencode-mobile --qr` в любом терминале).
+2. В приложении нажми **«Добавить компьютер» → «Сканировать QR-код»** и наведи камеру. Вместо QR можно ввести короткий код вручную — тогда приложение попросит сверить отпечаток сертификата с показанным в терминале ПК.
 3. Готово: телефон запомнит ПК и будет подключаться сам, когда вы в одной сети.
 
-Вместо QR можно ввести короткий код вручную — тогда приложение попросит сверить отпечаток сертификата (для защиты от подмены рекомендуется всё же QR).
+Код одноразовый, живёт 10 минут — так задумано автором (подсмотренный код умирает вместе с процессом, окно перебора не растянуть рестартом). Свежий код в любой момент — `opencode-mobile --qr`.
+
+### 5. Доступ вне дома (p2p, без белого IP)
+
+1. Собери туннель (`bridge/bin/opencode-tunnel`, см. [Сборка](#сборка-android-и-туннеля)) — без него `internet.available=false`.
+2. Включи флаг **только с самого ПК**: `opencode-mobile --device` → `i` (или `opencode-mobile internet on`). Проверка: `opencode-mobile internet status` — должно быть `ВКЛЮЧЁН` + тикет.
+3. Телефон должен **один раз подключиться по LAN уже при включённом флаге** — тогда он заберёт тикет и зарегистрирует свой NodeId в allowlist моста. Без этого шага с улицы не войти.
+4. Дальше всё само: дома — напрямую по LAN, на улице — p2p (`direct`, а если NAT строгий — `через relay`). Статус виден в приложении и в `opencode-mobile internet status` (там же RTT пиров).
+
+### 6. systemd-сервис — чтобы мост стартовал сам
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp <репо>/systemd/opencode-bridge.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now opencode-bridge
+```
+
+Важно: в юните `KillMode=process` — убивает только сам мост, хранители сессий (`keeper.js`) переживают рестарт. Без этого флага systemd убьёт и живые сессии opencode. Логи: `journalctl --user -u opencode-bridge -f`.
+
+> Перед запуском моста в окне терминала останови юнит (`systemctl --user stop`), иначе будет конфликт порта.
 
 ---
 
@@ -166,102 +187,129 @@ cd android
 
 | Ключ | Назначение |
 |------|-----------|
-| `port` | Порт моста (по умолчанию `8790`). |
+| `port` | Порт моста (по умолчанию `8890`). |
 | `host` | Интерфейс прослушивания (`0.0.0.0` — вся LAN). |
-| `claudeCommand` | Команда запуска Claude Code (обычно `claude`). |
+| `opencodeCommand` | Команда запуска opencode (обычно `opencode`). |
+| `opencodeArgs` | Аргументы по умолчанию. |
 | `projects` | **Белый список каталогов**, где телефон может запускать сессии. Пустой список = телефон не может создавать сессии вне `defaultCwd`. |
 | `defaultCwd` | Каталог по умолчанию для новых сессий. |
-| `env` | Доп. переменные окружения для сессий Claude Code (например, прокси для API — см. ниже). |
+| `env` | Доп. переменные окружения для сессий opencode (например, прокси для API). |
 | `scrollbackBytes` | Размер буфера прокрутки терминала. |
 | `sttPython` / `sttModel` / `sttLanguage` | Настройки голосового ввода (faster-whisper). |
 
-> ⚠️ `config.json` лежит в `.gitignore`: в нём — **ваши собственные** пути и переменные окружения (у каждого свои), поэтому он не должен попадать в git. Правьте именно `config.json` (создаётся из `config.example.json` при первом запуске), а не пример.
-
-### Прокси для Claude Code (опционально)
-
-Если `claude` должен ходить в API Anthropic через прокси, пропишите его в `env` — мост передаст эти переменные каждой запускаемой сессии:
-
-```json
-"env": {
-  "HTTP_PROXY":  "http://127.0.0.1:8118",
-  "HTTPS_PROXY": "http://127.0.0.1:10808",
-  "http_proxy":  "http://127.0.0.1:8118",
-  "https_proxy": "http://127.0.0.1:10808",
-  "NO_PROXY":    "127.0.0.1,localhost,192.168.0.0/16",
-  "no_proxy":    "127.0.0.1,localhost,192.168.0.0/16"
-}
-```
-
-Подставьте адреса своего прокси. `NO_PROXY` исключает из проксирования localhost и локальную сеть (чтобы связь моста с телефоном шла напрямую). Альтернатива — экспортировать эти переменные в окружении самого моста (в шелле или в `systemd`-юните): мост наследует их и передаёт сессиям. Явная запись в `env` надёжнее.
-
-### Голосовой ввод (опционально)
-
-```bash
-python3 -m pip install faster-whisper
-```
-
-Укажи в `config.json` интерпретатор (`sttPython`), модель (`sttModel`, напр. `large-v3`) и язык (`sttLanguage`). Модель загрузится в память при первом использовании.
+> ⚠️ `config.json` лежит в `.gitignore`: в нём — **ваши собственные** пути и переменные окружения (у каждого свои), поэтому он не должен попадать в git. Правьте именно `config.json`, а не пример. Туда же никогда не коммитятся `certs/`, `pairings.json`, `internet.json`.
 
 ---
 
-## Утилита `claude-mobile` (на ПК)
+## Утилита `opencode-mobile` (на ПК)
 
-Терминальный клиент того же моста — удобно управлять сессиями и устройствами с самого ПК:
+Терминальный клиент того же моста — сессии, сопряжение и устройства, всё с сервера:
 
 ```
-claude-mobile              # новая сессия в текущем каталоге
-claude-mobile [args…]      # аргументы уходят claude (--resume, --continue…)
-claude-mobile -l           # список сессий
-claude-mobile -a [id]      # подключиться к сессии
-claude-mobile --device     # доверенные устройства + p2p-доступ (просмотр/отзыв)
-claude-mobile --qr         # показать QR-код сопряжения
-claude-mobile -h           # справка
+bridge/opencode-mobile                  # новая сессия opencode в текущем каталоге
+bridge/opencode-mobile [args…]          # аргументы уходят opencode (run -c, -s, -m…)
+bridge/opencode-mobile -l               # список сессий
+bridge/opencode-mobile -a [id]          # подключиться к сессии
+bridge/opencode-mobile --qr             # показать QR-код сопряжения
+bridge/opencode-mobile --device         # доверенные устройства + p2p (интерактивно)
+bridge/opencode-mobile devices [--json] # список доверенных (скриптуемо)
+bridge/opencode-mobile revoke <id|номер> [-y]  # отозвать устройство
+bridge/opencode-mobile internet [on|off|status]  # p2p-доступ через интернет
+bridge/opencode-mobile -h               # справка
 ```
 
-`Ctrl+\` — отсоединиться (сессия продолжает жить). Завершить сессию: выйти из Claude (двойной `Ctrl+C` или `/exit`) или долгим нажатием на её вкладку в приложении.
+`Ctrl+\` — отсоединиться (сессия продолжает жить). Завершить сессию: выйти из opencode или долгим нажатием на её вкладку в приложении.
+
+Управление устройствами принимает **только локальный клиент** (проверка по UID того же пользователя): с телефона никого отозвать или включить интернет нельзя. Отзыв мгновенный — рвёт живые WS (`4401`) и перезапускает туннель, сбрасывая p2p-соединения отозванного узла.
 
 ---
 
-## Сборка туннеля под Android
+## Сборка Android и туннеля
 
-Нативная библиотека собирается кросс-компиляцией под aarch64 через Android NDK:
+Исходники портированы: `tunnel/` (`opencode-tunnel`, ALPN `opencode-bridge/1`), Android-пакет `com.q.opencodebridge` (порты `8890/8891`, mDNS `_opencode-bridge._tcp.`, `OPENCODE_BRIDGE?`, `libopencode-tunnel.so`). Основной путь — CI: `.github/workflows/build.yml` собирает `opencode-tunnel` (linux x86_64) и APK (`assembleDebug`, подпись debug-ключом как в релизах оригинала). Артефакты — вкладка Actions → последний зелёный ран → Releases.
+
+Запасной путь — локально (нужны JDK 17 + Android SDK platform-34/build-tools + NDK + Rust с `aarch64-linux-android`):
 
 ```bash
+cd tunnel && cargo build --release   # -> ../bridge/bin/opencode-tunnel
+# Android .so:
 rustup target add aarch64-linux-android
 export ANDROID_NDK_HOME=$HOME/Android/Sdk/ndk/<версия>
 NDK=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin
 export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$NDK/aarch64-linux-android26-clang
 export CC_aarch64_linux_android=$NDK/aarch64-linux-android26-clang
 export AR_aarch64_linux_android=$NDK/llvm-ar
-
-cd tunnel
 cargo build --release --target aarch64-linux-android
 mkdir -p ../android/app/src/main/jniLibs/arm64-v8a
-cp target/aarch64-linux-android/release/claude-tunnel \
-   ../android/app/src/main/jniLibs/arm64-v8a/libclaudetunnel.so
+cp target/aarch64-linux-android/release/opencode-tunnel \
+   ../android/app/src/main/jniLibs/arm64-v8a/libopencode-tunnel.so
+cd ../android && ./gradlew assembleDebug
+# APK: android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Затем пересобери APK (`./gradlew assembleDebug`).
+> Грабли: JDK 17.0.2 падает с cgroup-NPE в контейнере (`validateSigningDebug`) — лечится `org.gradle.jvmargs=-XX:-UseContainerSupport` (уже в `android/gradle.properties`).
 
 ---
 
-## Безопасность
+## Диагностика
 
-- **TLS + пиннинг отпечатка**: телефон доверяет только конкретному сертификату вашего ПК; отпечаток же служит идентификатором ПК.
-- **Сопряжение**: одноразовый код (40 бит) с глобальным лимитом попыток; QR-путь пиннит отпечаток до передачи секретов.
-- **Токены доступа** выдаются только сопряжённым устройствам; отзыв — мгновенный (рвёт живые соединения).
-- **Локальный доступ** (`claude-mobile`, hooks) доверяется по UID того же пользователя, а не «любому на loopback».
-- **На телефоне**: биометрический замок, `FLAG_SECURE` (нет превью и скриншотов), токен не покидает нативную часть.
+| Симптом | Причина и лечение |
+|---|---|
+| `failed to connect … after 5000ms`, адрес ПК виден | Файрвол на ПК: `sudo ufw allow 8890/tcp && sudo ufw allow 8891/udp`. Либо телефон не в домашней сети (источник `10.x`/`192.0.0.x` вместо `192.168.x`) — вернись на WiFi или включи p2p (раздел 5). |
+| `неверный код` / `код истёк` | Код одноразовый, 10 минут, умирает при рестарте моста. Свежий: `opencode-mobile --qr`. |
+| `NotFound: FileSystem.access (каталог)` от opencode | Каталога не существует — создай его перед запуском сессии. |
+| Мост молча упал, окно закрылось | Смотри хвост `bridge/bridge.log` (при запуске через `start-foot.sh` окно остаётся открытым с кодом выхода). Частая причина — занятый порт (два моста одновременно). |
+| Сессия «завершена» сразу после старта | opencode не принял аргументы — текст ошибки в сообщении. Справка: `opencode-mobile -h`. |
+| Телефон не находит ПК в сети | Подожди ~12 с (фора на поиск LAN), проверь Multicast/UDP: фаервол, изоляция клиентов (AP isolation) на роутере. |
+| Вне дома нет коннекта | Проверь по порядку: `internet status` → `ВКЛЮЧЁН` + тикет; телефон хоть раз цеплялся по LAN после включения флага (тикет + NodeId); смотри пиры: `peers` пусто — телефон не dial'ится (сеть/приложение спало), `relay` — работает через relay, это норма для строгого NAT. |
 
-Проект несколько раз проходил аудит безопасности; часть найденного исправлена, часть — осознанные компромиссы под конкретную модель угроз (самостоятельный хостинг для себя). Не рассчитывай на него как на многопользовательский сервис.
+---
+
+## Проверено
+
+Ручной smoke (2026-10-10): старт на `8890`, `-l`/`--qr`, `create → attach → exit` с очисткой, `POST /hook` → `{"ok":true}`, keeper + PTY переживают `kill`, рестарт → `Восстановлено живых сессий: 1`, `node --check` — всё OK.
+
+Живой тест с планшетом (2026-10-10, вечер):
+- Сопряжение по ручному коду: OK; UFW: открыть `8890/tcp` + `8891/udp`.
+- p2p из мобильной сети: OK — сначала `direct` (RTT ~6 мс), затем `relay` (~269 мс). Сопрягся раз — работает из любой сети.
+- Отзыв устройства с сервера (`revoke`): OK — приложение вылетает на экран сопряжения, allowlist чистится.
+
+---
+
+## Безопасность — не ослаблять
+
+При любом развитии форка: секреты только `0600`, `isLocal` только полный 4-кортеж + `ESTABLISHED` + тот же UID, `/pair` только с основного порта, отзыв рвёт WS `4401` + перезапускает туннель, `KillMode=process` в юните, `config.json` / `pairings.json` / `certs/` никогда в git.
+
+Проект несколько раз проходил аудит безопасности в оригинале; часть найденного исправлена, часть — осознанные компромиссы под конкретную модель угроз (самостоятельный хостинг для себя). Не рассчитывай на него как на многопользовательский сервис.
+
+---
+
+## Структура репозитория
+
+```
+opencode-bridge/
+├── bridge/               # Мост на ПК (Node.js): server.js, keeper.js, attach.js, web/
+│   ├── bin/              # Собранный opencode-tunnel (игнор в git, собирается из tunnel/)
+│   ├── certs/            # TLS + iroh-ключи (игнор в git, генерируются при старте)
+│   ├── config.example.json
+│   ├── start-foot.sh     # Запуск моста в окне foot (с логом, не закрывается при падении)
+│   └── opencode-mobile   # CLI-клиент (attach.js)
+├── plugin/               # Шим уведомлений для opencode (session.* → POST /hook)
+├── tunnel/               # p2p-туннель (Rust, iroh): listen / connect / id
+├── android/              # Приложение OpenCode Mobile (com.q.opencodebridge)
+├── systemd/              # opencode-bridge.service (user-юнит)
+├── .github/workflows/    # CI: tunnel + APK
+├── ARCHITECTURE.md       # Архитектура оригинала (подробно, на русском)
+├── FORK.md               # Журнал портирования: что менялось и что проверено
+└── AUTHORS.md            # Авторы оригинала и форка
+```
 
 ---
 
 ## Вклад в проект
 
-PR и issue приветствуются. Пожалуйста, не коммить личные данные (пути, токены, `config.json`, сертификаты) — они уже в `.gitignore`.
+PR и issue приветствуются. Пожалуйста, не коммить личные данные (пути, токены, `config.json`, сертификаты, `pairings.json`) — они уже в `.gitignore`. Иконка приложения — своя (не логотип автора оригинала), авторство оригинала — в [AUTHORS.md](AUTHORS.md), не удалять.
 
 ## Лицензия
 
-[GNU General Public License v3.0](LICENSE) © Black Triangle.
-Разработано в паре с Claude (Anthropic).
+[GNU General Public License v3.0](LICENSE) — как у оригинала. Оригинал © Black Triangle, разработан в паре с Claude (Anthropic). См. [AUTHORS.md](AUTHORS.md).

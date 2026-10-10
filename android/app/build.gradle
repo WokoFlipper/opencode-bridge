@@ -3,11 +3,11 @@ plugins {
 }
 
 android {
-    namespace 'com.q.claudebridge'
+    namespace 'com.q.opencodebridge'
     compileSdk 34
 
     defaultConfig {
-        applicationId "com.q.claudebridge"
+        applicationId "com.q.opencodebridge"
         minSdk 26
         targetSdk 34
         versionCode 1
@@ -25,7 +25,7 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
 
-    // claude-tunnel (iroh p2p) лежит в jniLibs как libclaudetunnel.so и
+    // opencode-tunnel (iroh p2p) лежит в jniLibs как libopencode-tunnel.so и
     // запускается как процесс: для exec библиотека должна быть распакована
     packaging {
         jniLibs {

@@ -1,6 +1,6 @@
 {
-  "name": "Claude Bridge",
-  "short_name": "ClaudeBridge",
+  "name": "OpenCode Bridge",
+  "short_name": "OpenCodeBridge",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0f172a",

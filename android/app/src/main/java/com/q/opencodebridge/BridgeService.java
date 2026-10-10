@@ -1,4 +1,4 @@
-package com.q.claudebridge;
+package com.q.opencodebridge;
 
 import android.app.Notification;
 import android.app.NotificationChannel;
@@ -39,21 +39,21 @@ import okhttp3.WebSocketListener;
 
 /**
  * Foreground-сервис: держит WebSocket с мостом на ПК, показывает системные
- * уведомления о событиях Claude Code, сам находит мост через mDNS (NSD).
+ * уведомления о событиях opencode, сам находит мост через mDNS (NSD).
  */
 public class BridgeService extends Service {
 
     private static final String TAG = "BridgeService";
-    public static final String SERVICE_TYPE = "_claude-bridge._tcp.";
-    public static final String ACTION_STATE = "com.q.claudebridge.STATE";
-    public static final String ACTION_INPUT = "com.q.claudebridge.INPUT";
-    public static final String ACTION_RECONNECT = "com.q.claudebridge.RECONNECT";
-    public static final String ACTION_VISIBILITY = "com.q.claudebridge.VISIBILITY";
-    public static final String INTERNAL_PERM = "com.q.claudebridge.permission.INTERNAL";
+    public static final String SERVICE_TYPE = "_opencode-bridge._tcp.";
+    public static final String ACTION_STATE = "com.q.opencodebridge.STATE";
+    public static final String ACTION_INPUT = "com.q.opencodebridge.INPUT";
+    public static final String ACTION_RECONNECT = "com.q.opencodebridge.RECONNECT";
+    public static final String ACTION_VISIBILITY = "com.q.opencodebridge.VISIBILITY";
+    public static final String INTERNAL_PERM = "com.q.opencodebridge.permission.INTERNAL";
     public static final String PREFS = "bridge";
 
     private static final String CH_STATUS = "bridge_status";
-    private static final String CH_EVENTS = "claude_events";
+    private static final String CH_EVENTS = "opencode_events";
     private static final int STATUS_ID = 1;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -65,7 +65,7 @@ public class BridgeService extends Service {
     private ConnectivityManager.NetworkCallback netCallback;
 
     private String host = null;
-    private int port = 8790;
+    private int port = 8890;
     private boolean connected = false;
     private boolean connecting = false;
     private boolean resolving = false;
@@ -91,7 +91,7 @@ public class BridgeService extends Service {
     private String certFp = null;
     private BridgeStore store;
 
-    // --- интернет-туннель (сайдкар claude-tunnel, p2p iroh) ---
+    // --- интернет-туннель (сайдкар opencode-tunnel, p2p iroh) ---
     private Process tunnelProc = null;
     private volatile int tunnelPort = 0;        // >0 — туннель готов на 127.0.0.1:port
     private volatile boolean viaTunnel = false; // текущее WS-соединение идёт через туннель
@@ -135,7 +135,7 @@ public class BridgeService extends Service {
         ensurePhoneNodeId(); // заранее вычисляем свой p2p-NodeId для allowlist
         SharedPreferences p = getSharedPreferences(PREFS, MODE_PRIVATE);
         host = p.getString("host", null);
-        port = p.getInt("port", 8790);
+        port = p.getInt("port", 8890);
         token = p.getString("token", null);
         certFp = p.getString("fp", null);
         http = Tls.buildClient(certFp);
@@ -143,7 +143,7 @@ public class BridgeService extends Service {
         lanGraceUntil = System.currentTimeMillis() + 12_000; // сперва ищем ПК в LAN
 
         WifiManager wifi = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
-        mcLock = wifi.createMulticastLock("claude-bridge-mdns");
+        mcLock = wifi.createMulticastLock("opencode-bridge-mdns");
         mcLock.setReferenceCounted(false);
         mcLock.acquire();
 
@@ -271,10 +271,10 @@ public class BridgeService extends Service {
         handler.post(changed ? this::forceReconnect : this::connect);
     }
 
-    /** Резервное обнаружение: broadcast "CLAUDE_BRIDGE?" на порт 8791, мост отвечает JSON'ом. */
+    /** Резервное обнаружение: broadcast "OPENCODE_BRIDGE?" на порт 8891, мост отвечает JSON'ом. */
     private void startUdpProbe() {
         Thread t = new Thread(() -> {
-            byte[] q = "CLAUDE_BRIDGE?".getBytes();
+            byte[] q = "OPENCODE_BRIDGE?".getBytes();
             while (!Thread.interrupted()) {
                 if (!allowedNow()) { // экономия: в фоне не опрашиваем сеть
                     try { Thread.sleep(8000); } catch (InterruptedException e) { return; }
@@ -284,15 +284,15 @@ public class BridgeService extends Service {
                     sock.setBroadcast(true);
                     sock.setSoTimeout(2000);
                     sock.send(new DatagramPacket(q, q.length,
-                            InetAddress.getByName("255.255.255.255"), 8791));
+                            InetAddress.getByName("255.255.255.255"), 8891));
                     byte[] buf = new byte[1024];
                     DatagramPacket resp = new DatagramPacket(buf, buf.length);
                     sock.receive(resp); // ждём unicast-ответ моста
                     JSONObject j = new JSONObject(new String(resp.getData(), 0, resp.getLength()));
-                    if (j.optBoolean("claudeBridge")) {
+                    if (j.optBoolean("opencodeBridge", j.optBoolean("claudeBridge", false))) {
                         String h = resp.getAddress().getHostAddress();
-                        Log.i(TAG, "UDP: мост найден " + h + ":" + j.optInt("port", 8790));
-                        onBridgeFound(h, j.optInt("port", 8790),
+                        Log.i(TAG, "UDP: мост найден " + h + ":" + j.optInt("port", 8890));
+                        onBridgeFound(h, j.optInt("port", 8890),
                                 j.optString("fp", null), j.optString("host", h));
                     }
                 } catch (Exception ignored) {
@@ -324,7 +324,7 @@ public class BridgeService extends Service {
 
             @Override
             public void onServiceFound(NsdServiceInfo info) {
-                if (resolving || !info.getServiceType().contains("claude-bridge")) return;
+                if (resolving || !info.getServiceType().contains("opencode-bridge")) return;
                 resolving = true;
                 nsd.resolveService(info, new NsdManager.ResolveListener() {
                     @Override public void onResolveFailed(NsdServiceInfo i, int e) { resolving = false; }
@@ -502,12 +502,12 @@ public class BridgeService extends Service {
                     JSONObject m = new JSONObject(text);
                     String type = m.optString("type");
                     if ("notify".equals(type)) {
-                        showEvent(m.optString("title", "Claude Code"),
+                        showEvent(m.optString("title", "opencode"),
                                 m.optString("message", "Событие"),
                                 m.optString("id", ""),
                                 m.optString("event", ""));
                     } else if ("status".equals(type)) {
-                        // Claude снова работает (например, ответили на ПК) —
+                        // opencode снова работает (например, ответили на ПК) —
                         // уведомление этой сессии больше не актуально
                         if ("working".equals(m.optString("status"))) {
                             cancelEventNotif(m.optString("id"));
@@ -624,7 +624,7 @@ public class BridgeService extends Service {
     // ----- постоянная p2p-личность телефона (NodeId) для allowlist моста -----
 
     private java.io.File tunnelBin() {
-        return new java.io.File(getApplicationInfo().nativeLibraryDir, "libclaudetunnel.so");
+        return new java.io.File(getApplicationInfo().nativeLibraryDir, "libopencode-tunnel.so");
     }
 
     private String phoneKeyPath() {
@@ -683,7 +683,7 @@ public class BridgeService extends Service {
         } catch (Exception ignored) { }
     }
 
-    /** Запустить сайдкар claude-tunnel в режиме connect (телефон -> ПК). */
+    /** Запустить сайдкар opencode-tunnel в режиме connect (телефон -> ПК). */
     private synchronized void ensureTunnel(String ticket) {
         if (tunnelProc != null || tunnelBinMissing) return;
         java.io.File bin = tunnelBin();
@@ -764,10 +764,10 @@ public class BridgeService extends Service {
                 NotificationManager.IMPORTANCE_MIN);
         st.setShowBadge(false);
         nm.createNotificationChannel(st);
-        NotificationChannel ev = new NotificationChannel(CH_EVENTS, "События Claude Code",
+        NotificationChannel ev = new NotificationChannel(CH_EVENTS, "События opencode",
                 NotificationManager.IMPORTANCE_HIGH);
         ev.enableVibration(true);
-        // на локскрине содержимое (текст запроса Claude) скрыто по умолчанию
+        // на локскрине содержимое (текст запроса opencode) скрыто по умолчанию
         ev.setLockscreenVisibility(Notification.VISIBILITY_PRIVATE);
         nm.createNotificationChannel(ev);
     }
@@ -778,7 +778,7 @@ public class BridgeService extends Service {
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         return new Notification.Builder(this, CH_STATUS)
                 .setSmallIcon(R.drawable.ic_stat)
-                .setContentTitle("Claude Bridge")
+                .setContentTitle("OpenCode Mobile")
                 .setContentText(text)
                 .setContentIntent(pi)
                 .setOngoing(true)
@@ -827,7 +827,7 @@ public class BridgeService extends Service {
                 android.graphics.drawable.Icon.createWithResource(this, R.drawable.ic_stat),
                 label, pi);
         // при включённой биометрии нажатие требует разблокировки устройства
-        // (иначе ответ Claude'у можно было бы дать прямо с локскрина)
+        // (иначе ответ opencode'у можно было бы дать прямо с локскрина)
         if (requireAuth && Build.VERSION.SDK_INT >= 31) ab.setAuthenticationRequired(true);
         return ab.build();
     }
@@ -849,7 +849,7 @@ public class BridgeService extends Service {
             // новое событие заменяет прежнее уведомление этой же сессии
             Integer prev = eventNids.remove(sessionId);
             if (prev != null) { nm.cancel(prev); eventKinds.remove(sessionId); }
-            // «Claude завершил ответ» устаревает, как только пришло любое новое событие
+            // «opencode завершил ответ» устаревает, как только пришло любое новое событие
             var it = eventNids.entrySet().iterator();
             while (it.hasNext()) {
                 var e = it.next();
@@ -880,7 +880,7 @@ public class BridgeService extends Service {
                 // при биометрии на локскрине не показываем ничего, иначе только заголовок
                 .setVisibility(biolock ? Notification.VISIBILITY_SECRET : Notification.VISIBILITY_PRIVATE)
                 .setAutoCancel(true);
-        // Claude ждёт ответа — отвечаем прямо из уведомления. Но при включённой
+        // opencode ждёт ответа — отвечаем прямо из уведомления. Но при включённой
         // биометрии кнопки НЕ должны срабатывать с локскрина без разблокировки:
         //  • API ≥ 31: требуем разблокировку на нажатие (setAuthenticationRequired);
         //  • API < 31 (нельзя защитить кнопку): не показываем кнопки вовсе.

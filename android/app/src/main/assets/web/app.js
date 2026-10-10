@@ -65,8 +65,8 @@ if (window.visualViewport) window.visualViewport.addEventListener('resize', refi
 
 // Прокрутка пальцем.
 // Обычный буфер (bash и т.п.) — листаем scrollback xterm.
-// Альтернативный экран (Claude Code TUI) — шлём приложению события колеса
-// мыши: TUI сам перерисует свою историю, включая восстановленную --resume.
+// Альтернативный экран (TUI агента) — шлём приложению события колеса
+// мыши: TUI сам перерисует свою историю, включая восстановленную --continue.
 function sendScroll(lines) {
   if (!current) return;
   const n = Math.min(Math.abs(lines), 10);
@@ -157,7 +157,7 @@ function dragMoveTo(clientX, clientY) {
 // историю, выделение тянется следом. Работает и при растягивании тем же
 // пальцем после долгого нажатия, и при перетаскивании ползунков.
 // В обычном буфере листаем scrollback xterm; в альтернативном экране
-// (Claude Code TUI) шлём приложению колесо мыши — контент прокручивается
+// (TUI агента) шлём приложению колесо мыши — контент прокручивается
 // под выделением, копируется то, что подсвечено на экране.
 const AUTOSCROLL_ZONE = 48;
 let autoTimer = null;
@@ -234,7 +234,7 @@ function autoStep() {
   const d = autoScrollDir(lastDragXY.y);
   if (!d) { stopAutoScroll(); return; }
   if (term.buffer.active.type === 'alternate') {
-    // Историей управляет сам TUI (Claude Code): шлём колесо, а после его
+    // Историей управляет сам TUI (opencode): шлём колесо, а после его
     // перерисовки сдвигаем выделение на столько же строк — оно остаётся
     // «приклеенным» к тексту, пока тот не уедет за пределы экрана.
     if (altBusy) return;
@@ -590,7 +590,7 @@ function onNotify(m) {
   beep();
 
   if (window.Notification && Notification.permission === 'granted' && document.hidden) {
-    try { new Notification('Claude Code', { body: text }); } catch {}
+    try { new Notification('opencode', { body: text }); } catch {}
   }
   renderTabs();
 }
@@ -625,7 +625,7 @@ $('#msg').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preven
 // ------------------------------------------------------------ голосовой ввод
 // Долгое нажатие на кнопку отправки: запись через нативный мост (AndroidSTT),
 // распознавание — whisper на ПК. «Принять» кладёт текст в поле для правки,
-// «Ввод» отправляет его в Claude сразу.
+// «Ввод» отправляет его в opencode сразу.
 
 const voice = {
   el: $('#voice'),
@@ -672,7 +672,7 @@ function voiceRelease() {
   clearInterval(voice.tickTimer);
   window.AndroidSTT.stop();
   voice.el.classList.remove('rec');
-  voice.hint.textContent = '«Принять» — текст в поле ввода, «Ввод» — сразу в Claude';
+  voice.hint.textContent = '«Принять» — текст в поле ввода, «Ввод» — сразу в opencode';
   voice.btns.classList.remove('hidden');
 }
 
@@ -820,17 +820,20 @@ $('#createCancel').addEventListener('click', () => $('#newDialog').close());
 $('#createOk').addEventListener('click', () => {
   const cwd = $('#projectCustom').value.trim() || $('#projectSel').value;
   const cargs = [];
-  if ($('#optResume').checked) cargs.push('--resume');
-  if ($('#optDanger').checked) cargs.push('--dangerously-skip-permissions');
-  // resume при живой сессии в том же каталоге: если беседа ещё открыта в ней,
-  // claude не сможет продолжить тот же файл и молча создаст КОПИЮ беседы —
-  // так в списке resume появляются дубликаты. Предлагаем вернуться в живую.
-  if (cargs.includes('--resume')) {
+  if ($('#optResume').checked) cargs.push('--continue');
+  if ($('#optDanger').checked) {
+    if (!cargs.includes('--continue')) cargs.push('--continue');
+    cargs.push('--fork');
+  }
+  // continue при живой сессии в том же каталоге: продолжение подхватит
+  // состояние активной беседы — предлагаем вернуться в живую сессию,
+  // а --fork оставить для явного ответвления.
+  if (cargs.includes('--continue')) {
     const norm = (p) => (p || '').replace(/\/+$/, '');
     const live = sessions.filter((s) => s.alive && norm(s.cwd) === norm(cwd));
     if (live.length && window.confirm(
         `В «${cwd}» уже есть живая сессия: ${live[0].title}.\n` +
-        `Если беседа ещё открыта в ней, resume создаст копию беседы.\n\n` +
+        `Продолжение подхватит её состояние; для копии нужен --fork.\n\n` +
         `Открыть живую сессию вместо этого?`)) {
       $('#newDialog').close();
       attach(live[0].id, true);

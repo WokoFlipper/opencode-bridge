@@ -59,7 +59,7 @@ if (!fs.existsSync(path.join(CERT_DIR, 'cert.pem'))) {
   fs.mkdirSync(CERT_DIR, { recursive: true, mode: 0o700 });
   execSync(
     `openssl req -x509 -newkey rsa:2048 -keyout "${CERT_DIR}/key.pem" ` +
-    `-out "${CERT_DIR}/cert.pem" -days 3650 -nodes -subj "/CN=claude-bridge" 2>/dev/null`
+    `-out "${CERT_DIR}/cert.pem" -days 3650 -nodes -subj "/CN=opencode-bridge" 2>/dev/null`
   );
 }
 // Приватный TLS-ключ и каталог с ключами не должны быть доступны другим
@@ -84,7 +84,9 @@ try { pairings = JSON.parse(fs.readFileSync(PAIR_FILE, 'utf8')); } catch { /* п
 // pairings.json содержит токены устройств открытым текстом — файл только для
 // владельца (0600). Чиним права и на уже существующем файле (мог быть 0644).
 try { if (fs.existsSync(PAIR_FILE)) fs.chmodSync(PAIR_FILE, 0o600); } catch {}
-// Код сопряжения живёт 10 минут (новый — при старте или по claude-mobile --qr).
+// Код сопряжения живёт 10 минут (новый — при старте или по opencode-mobile --qr).
+// Одноразовый и НЕ переживает рестарт — так задумано автором: подобранный код
+// умирает вместе с процессом, окно перебора не растянуть перезапуском.
 // Защита от перебора: 5 неверных попыток -> блокировка /pair на 15 минут.
 const PAIR_TTL_MS = 10 * 60 * 1000;
 let pairState = { code: '', expiresAt: 0 };
@@ -142,8 +144,8 @@ function norm4(ip) {
  * UID процесса на другом конце loopback-соединения (Linux, /proc/net/tcp).
  * Сравниваем ПОЛНЫЙ 4-кортеж (оба IP и оба порта) и требуем состояние
  * ESTABLISHED (01). Матч только по портам был бы неоднозначен: процесс другого
- * UID мог бы открыть 127.0.0.1:E -> 127.0.0.2:8790 (сервер слушает 0.0.0.0) с
- * тем же эфемерным портом E, что и соединение владельца к 127.0.0.1:8790, и
+ * UID мог бы открыть 127.0.0.1:E -> 127.0.0.2:PORT (сервер слушает 0.0.0.0) с
+ * тем же эфемерным портом E, что и соединение владельца к 127.0.0.1:PORT, и
  * подсунуть чужой UID из первой попавшейся строки. Полное сравнение адресов
  * изолирует именно наш сокет; ESTABLISHED отсекает TIME_WAIT-призраки.
  * Возвращает -1, если определить не удалось (isLocal тогда fail-closed).
@@ -176,7 +178,7 @@ function isLocal(req) {
   const a = req.socket.remoteAddress;
   const loopback = a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1';
   // трафик из интернет-туннеля тоже приходит с loopback, но на отдельный порт:
-  // локальное доверие — только для основного порта (claude-mobile, hooks)
+  // локальное доверие — только для основного порта (opencode-mobile, hooks)
   if (!loopback || req.socket.localPort !== CONFIG.port) return false;
   // UID не определить (не-POSIX / контейнер / hardened /proc) -> НЕ доверяем:
   // fail-closed, лучше сломать локального клиента, чем пустить чужого
@@ -230,7 +232,7 @@ function revokeDeviceById(id) {
 // Каждая сессия живёт в отдельном процессе-хранителе (keeper.js) и общается
 // с мостом через unix-сокет: перезапуск моста не убивает Claude Code.
 
-const SESS_DIR = path.join(os.homedir(), '.claude-bridge', 'sessions');
+const SESS_DIR = path.join(os.homedir(), '.opencode-bridge', 'sessions');
 fs.mkdirSync(SESS_DIR, { recursive: true, mode: 0o700 });
 // mkdir с mode подвержен umask, а на уже существующем каталоге mode не меняет:
 // сокеты хранителей — единственная защита от захвата чужой сессии тем же
@@ -354,7 +356,7 @@ function connectKeeper(session, retries) {
 
 // Рабочий каталог удалённой (телефонной) сессии обязан лежать внутри
 // разрешённых проектов — иначе телефон мог бы запустить claude в произвольном
-// месте ФС. Локальные клиенты (claude-mobile) не ограничены.
+// месте ФС. Локальные клиенты (opencode-mobile) не ограничены.
 function isUnderAllowedRoot(dir) {
   const resolved = path.resolve(dir);
   return (CONFIG.projects || []).some((r) => {
@@ -376,15 +378,15 @@ function remoteCwd(cwd) {
 function createSession({ cwd, command, args, title, local }) {
   const id = 's' + (++seq) + '-' + crypto.randomBytes(3).toString('hex');
   // Произвольную КОМАНДУ (бинарь) выбирают только локальные клиенты
-  // (claude-mobile, десктоп-браузер): телефон всегда запускает настроенный
+  // (opencode-mobile, десктоп-браузер): телефон всегда запускает настроенный
   // claude — с телефона нельзя запустить /bin/sh и т.п.
   // Аргументы (напр. --resume, --dangerously-skip-permissions) телефон задаёт
   // сам — это его штатные опции запуска, а сопряжённое устройство и так имеет
   // полный интерактивный контроль над PTY, так что ограничивать их смысла нет.
   // А вот КАТАЛОГ у телефона ограничиваем разрешёнными проектами, чтобы claude
   // нельзя было стартовать вне них (например, в ~/.ssh).
-  const cmd = (local && command) ? command : CONFIG.claudeCommand;
-  const cmdArgs = (args && args.length) ? args : (CONFIG.claudeArgs || []);
+  const cmd = (local && command) ? command : (CONFIG.opencodeCommand || CONFIG.claudeCommand || 'opencode');
+  const cmdArgs = (args && args.length) ? args : (CONFIG.opencodeArgs || CONFIG.claudeArgs || []);
   const dir = local ? (cwd || CONFIG.defaultCwd || os.homedir()) : remoteCwd(cwd);
 
   const meta = {
@@ -400,7 +402,7 @@ function createSession({ cwd, command, args, title, local }) {
   };
   // env НЕ пишем в meta-файл: process.env может содержать секреты, а файл
   // остаётся на диске. Передаём окружение хранителю через сам процесс.
-  const childEnv = { ...process.env, ...CONFIG.env, CLAUDE_BRIDGE_SESSION: id, FORCE_COLOR: '3' };
+  const childEnv = { ...process.env, ...CONFIG.env, OPENCODE_BRIDGE_SESSION: id, FORCE_COLOR: '3' };
   const metaPath = path.join(SESS_DIR, id + '.json');
   fs.writeFileSync(metaPath, JSON.stringify(meta));
 
@@ -514,12 +516,12 @@ function transcribe(file) {
 }
 
 // ---------------------------------------------------------------- internet (p2p iroh)
-// Опциональный доступ через интернет: сайдкар claude-tunnel (Rust + iroh)
+// Опциональный доступ через интернет: сайдкар opencode-tunnel (Rust + iroh)
 // принимает p2p-соединения и пробрасывает их на локальный порт туннеля.
-// Включается только явно: claude-mobile --device -> «i».
+// Включается только явно: opencode-mobile --device -> «i».
 
 const INET_FILE = path.join(__dirname, 'internet.json');
-const TUNNEL_BIN = path.join(__dirname, 'bin', 'claude-tunnel');
+const TUNNEL_BIN = path.join(__dirname, 'bin', 'opencode-tunnel');
 const TUNNEL_PORT = CONFIG.port + 2; // локальный порт для трафика из туннеля
 // allowlist iroh-узлов: телефон регистрирует свой NodeId (по LAN, через
 // защищённый WS), сюда пишутся id всех сопряжённых устройств. Туннель
@@ -536,7 +538,7 @@ function writeAllowFile() {
 let inet = { enabled: false };
 try { inet = { ...inet, ...JSON.parse(fs.readFileSync(INET_FILE, 'utf8')) }; } catch { /* дефолт */ }
 
-let tunnel = null; // процесс claude-tunnel
+let tunnel = null; // процесс opencode-tunnel
 let tunnelInfo = { ticket: null, nodeId: null };
 const tunnelPeers = new Map(); // id соединения -> { remote, path, addr, rttMs }
 let tunnelRestartTimer = null;
@@ -556,7 +558,7 @@ function broadcastInternet() { broadcast(internetMsg()); }
 function startTunnel() {
   if (tunnel || !inet.enabled) return;
   if (!fs.existsSync(TUNNEL_BIN)) {
-    console.error('  Интернет-доступ включён, но bridge/bin/claude-tunnel не собран');
+    console.error('  Интернет-доступ включён, но bridge/bin/opencode-tunnel не собран');
     return;
   }
   // бесхозные туннели прошлых запусков (у них тот же ключ/NodeId) — убрать
@@ -647,7 +649,7 @@ function httpHandler(req, res) {
       // адресов упирается сюда; сбрасывается только новым кодом) (F11/F14).
       if (pairFailTotal >= PAIR_FAIL_TOTAL_MAX) {
         res.writeHead(429, { 'Content-Type': 'application/json' });
-        res.end('{"error":"слишком много неверных попыток — обновите код: claude-mobile --qr"}');
+        res.end('{"error":"слишком много неверных попыток — обновите код: opencode-mobile --qr"}');
         return;
       }
       const g = pairGuard.get(ip) || { fails: 0, blockedUntil: 0 };
@@ -658,7 +660,7 @@ function httpHandler(req, res) {
       }
       if (Date.now() > pairState.expiresAt) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
-        res.end('{"error":"код истёк — выполните claude-mobile --qr на ПК"}');
+        res.end('{"error":"код истёк — выполните opencode-mobile --qr на ПК"}');
         return;
       }
       if (!safeEqStr((p.code || '').toUpperCase(), pairState.code)) {
@@ -946,7 +948,7 @@ wss.on('connection', (ws, req) => {
         break;
       case 'devices':
         // список устройств — только локальным клиентам (десктоп-браузер,
-        // claude-mobile); телефон управляет ПК через нативное меню, не этим
+        // opencode-mobile); телефон управляет ПК через нативное меню, не этим
         if (ws.deviceId === 'local') ws.send(JSON.stringify(devicesMsg(ws)));
         break;
       case 'internet':
@@ -969,14 +971,14 @@ wss.on('connection', (ws, req) => {
         break;
       }
       case 'setInternet':
-        // включение/выключение — только с самого ПК (claude-mobile --device)
+        // включение/выключение — только с самого ПК (opencode-mobile --device)
         if (ws.deviceId === 'local') {
           setInternet(m.enabled);
           broadcastInternet();
         }
         break;
       case 'pairinfo':
-        // данные сопряжения — только локальным клиентам (claude-mobile --qr);
+        // данные сопряжения — только локальным клиентам (opencode-mobile --qr);
         // каждый запрос выдаёт свежий код на 10 минут
         if (ws.deviceId === 'local') {
           const p = regenPairCode();
@@ -992,7 +994,7 @@ wss.on('connection', (ws, req) => {
         }
         break;
       case 'revokeDevice':
-        // отзыв устройств — только с самого ПК (claude-mobile --device / десктоп),
+        // отзыв устройств — только с самого ПК (opencode-mobile --device / десктоп),
         // иначе сопряжённый телефон мог бы отозвать все остальные устройства.
         // Список устройств тоже отдаём ТОЛЬКО локальному клиенту: удалённое
         // устройство иначе прочитало бы id/имена/даты всех остальных (F12).
@@ -1024,7 +1026,7 @@ function lanAddress() {
   return '127.0.0.1';
 }
 
-// UDP-обнаружение: телефон шлёт broadcast "CLAUDE_BRIDGE?" на 8791,
+// UDP-обнаружение: телефон шлёт broadcast "OPENCODE_BRIDGE?" на порт+1,
 // мост отвечает unicast'ом с адресом. Надёжнее mDNS в замусоренных сетях.
 const dgram = require('dgram');
 
@@ -1048,11 +1050,11 @@ function isPrivateAddr(ip) {
 
 const beacon = dgram.createSocket({ type: 'udp4', reuseAddr: true });
 beacon.on('message', (msg, rinfo) => {
-  if (msg.toString().trim() === 'CLAUDE_BRIDGE?' && isPrivateAddr(rinfo.address)) {
+  if (msg.toString().trim() === 'OPENCODE_BRIDGE?' && isPrivateAddr(rinfo.address)) {
     // fp — публичный отпечаток сертификата: телефон по нему понимает,
     // КАКОЙ из его сопряжённых компьютеров ответил
     const reply = JSON.stringify({
-      claudeBridge: true, port: CONFIG.port, host: os.hostname(), fp: FINGERPRINT,
+      opencodeBridge: true, claudeBridge: true, port: CONFIG.port, host: os.hostname(), fp: FINGERPRINT,
     });
     beacon.send(reply, rinfo.port, rinfo.address);
   }
@@ -1070,8 +1072,8 @@ server.listen(CONFIG.port, CONFIG.host, () => {
   try {
     const bonjour = new Bonjour();
     bonjour.publish({
-      name: CONFIG.mdnsName || 'claude-bridge',
-      type: 'claude-bridge',
+      name: CONFIG.mdnsName || 'opencode-bridge',
+      type: 'opencode-bridge',
       port: CONFIG.port,
       txt: { path: '/', fp: FINGERPRINT },
     });
@@ -1082,19 +1084,19 @@ server.listen(CONFIG.port, CONFIG.host, () => {
   restoreSessions();
 
   const pairPayload = JSON.stringify({
-    cb: 1, host: ip, port: CONFIG.port, code: pairState.code, fp: FINGERPRINT,
+    ob: 1, host: ip, port: CONFIG.port, code: pairState.code, fp: FINGERPRINT,
   });
 
   console.log('');
-  console.log('  Claude Bridge запущен (HTTPS/WSS, порт ' + CONFIG.port + ')');
+  console.log('  OpenCode Bridge запущен (HTTPS/WSS, порт ' + CONFIG.port + ')');
   console.log(`  Доверенных устройств: ${pairings.devices.length}` +
     (pairings.devices.length ? ' — подключатся сами' : ''));
   console.log('  Доступ через интернет: ' +
-    (inet.enabled ? 'включён (p2p iroh)' : 'выключен (включить: claude-mobile --device)'));
+    (inet.enabled ? 'включён (p2p iroh)' : 'выключен (включить: opencode-mobile --device)'));
   console.log('');
   console.log('  Добавить новое устройство: отсканируйте QR в приложении');
   console.log(`  или введите код вручную:  ${pairState.code}  (действует 10 минут,`);
-  console.log('  свежий код в любой момент: claude-mobile --qr)');
+  console.log('  свежий код в любой момент: opencode-mobile --qr)');
   console.log('');
   qrcode.generate(pairPayload, { small: true });
   console.log(`  Отпечаток сертификата: ${FINGERPRINT.slice(0, 16)}…`);

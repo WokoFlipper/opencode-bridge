@@ -1,4 +1,4 @@
-package com.q.claudebridge;
+package com.q.opencodebridge;
 
 import android.content.Context;
 import android.content.SharedPreferences;
@@ -164,7 +164,7 @@ public final class LocalGateway {
     private static void proxyWs(Context app, Socket client) throws Exception {
         SharedPreferences p = app.getSharedPreferences(BridgeService.PREFS, Context.MODE_PRIVATE);
         String host = p.getString("useHost", p.getString("host", null));
-        int port = p.getInt("usePort", p.getInt("port", 8790));
+        int port = p.getInt("usePort", p.getInt("port", 8890));
         String fp = p.getString("fp", null);
         String token = p.getString("token", null);
         if (host == null || fp == null || token == null) return; // моста/токена ещё нет

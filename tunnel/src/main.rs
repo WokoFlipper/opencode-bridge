@@ -1,4 +1,4 @@
-//! claude-tunnel: TCP-over-iroh sidecar for the Claude Bridge.
+//! opencode-tunnel: TCP-over-iroh sidecar for the OpenCode Bridge.
 //!
 //! Two subcommands:
 //!   listen  -- PC side: accepts iroh connections, forwards each bi-stream to a local TCP target.
@@ -26,7 +26,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Semaphore;
 use tokio_stream::StreamExt;
 
-const ALPN: &[u8] = b"claude-bridge/1";
+const ALPN: &[u8] = b"opencode-bridge/1";
 
 /// Ограничения от DoS-амплификации: один телефон использует 1 соединение и
 /// горстку потоков, эти пределы с большим запасом покрывают легитимный трафик.
@@ -34,7 +34,7 @@ const MAX_CONNS: usize = 32;
 const MAX_STREAMS_PER_CONN: usize = 64;
 
 #[derive(Parser)]
-#[command(name = "claude-tunnel", about = "TCP over iroh p2p tunnel")]
+#[command(name = "opencode-tunnel", about = "TCP over iroh p2p tunnel")]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,

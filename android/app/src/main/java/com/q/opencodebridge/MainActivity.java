@@ -1,4 +1,4 @@
-package com.q.claudebridge;
+package com.q.opencodebridge;
 
 import android.Manifest;
 import android.app.Activity;
@@ -166,7 +166,7 @@ public class MainActivity extends Activity {
         icon.setTextSize(52);
         icon.setGravity(Gravity.CENTER);
         box.addView(icon);
-        TextView t = themedText("Claude Bridge защищён", C_TEXT, 18);
+        TextView t = themedText("OpenCode Mobile защищён", C_TEXT, 18);
         t.setGravity(Gravity.CENTER);
         t.setPadding(0, dp(12), 0, dp(20));
         box.addView(t);
@@ -193,7 +193,7 @@ public class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 28) {
             android.hardware.biometrics.BiometricPrompt.Builder bb =
                     new android.hardware.biometrics.BiometricPrompt.Builder(this)
-                            .setTitle("Claude Bridge")
+                            .setTitle("OpenCode Mobile")
                             .setSubtitle("Подтвердите, что это вы");
             if (Build.VERSION.SDK_INT >= 30) {
                 bb.setAllowedAuthenticators(
@@ -215,7 +215,7 @@ public class MainActivity extends Activity {
             android.app.KeyguardManager km =
                     (android.app.KeyguardManager) getSystemService(KEYGUARD_SERVICE);
             Intent i = km == null ? null
-                    : km.createConfirmDeviceCredentialIntent("Claude Bridge", "Подтвердите, что это вы");
+                    : km.createConfirmDeviceCredentialIntent("OpenCode Mobile", "Подтвердите, что это вы");
             if (i != null) startActivityForResult(i, 42);
             else unlockNow(); // блокировка экрана не настроена — не запираем насмерть
         }
@@ -262,7 +262,7 @@ public class MainActivity extends Activity {
         box.setPadding(pad, pad, pad, pad);
 
         TextView title = new TextView(this);
-        title.setText("Сопряжение с Claude Bridge");
+        title.setText("Сопряжение с OpenCode Mobile");
         title.setTextColor(Color.WHITE);
         title.setTextSize(22);
         title.setTypeface(null, Typeface.BOLD);
@@ -336,11 +336,11 @@ public class MainActivity extends Activity {
                 .addOnSuccessListener(barcode -> {
                     try {
                         JSONObject j = new JSONObject(barcode.getRawValue());
-                        if (j.optInt("cb") != 1) throw new Exception("не тот QR");
-                        pair(j.getString("host"), j.optInt("port", 8790),
+                        if (j.optInt("ob", j.optInt("cb", 0)) != 1) throw new Exception("не тот QR");
+                        pair(j.getString("host"), j.optInt("port", 8890),
                                 j.getString("code"), j.optString("fp", null));
                     } catch (Exception e) {
-                        setPairStatus("Это не QR-код Claude Bridge");
+                        setPairStatus("Это не QR-код OpenCode Mobile");
                     }
                 })
                 .addOnFailureListener(e -> setPairStatus("Сканер недоступен: " + e.getMessage()));
@@ -442,12 +442,12 @@ public class MainActivity extends Activity {
                 setPairStatus("Новый компьютер в сети не найден — подождите пару секунд или используйте QR");
                 return;
             }
-            pair(host, prefs.getInt("port", 8790), code, null);
+            pair(host, prefs.getInt("port", 8890), code, null);
             return;
         }
         if (cand.size() == 1) {
             JSONObject d = cand.get(0);
-            pair(d.optString("host"), d.optInt("port", 8790), code, null);
+            pair(d.optString("host"), d.optInt("port", 8890), code, null);
             return;
         }
         // несколько новых ПК в сети: уточняем, к какому подключаться
@@ -459,7 +459,7 @@ public class MainActivity extends Activity {
                 .setTitle("К какому компьютеру подключиться?")
                 .setItems(names, (dlg, which) -> {
                     JSONObject d = cand.get(which);
-                    pair(d.optString("host"), d.optInt("port", 8790), code, null);
+                    pair(d.optString("host"), d.optInt("port", 8890), code, null);
                 })
                 .show();
     }
@@ -629,7 +629,7 @@ public class MainActivity extends Activity {
             del.setPadding(dp(10), dp(6), dp(10), dp(6));
             del.setOnClickListener(v -> new AlertDialog.Builder(this)
                     .setMessage("Удалить «" + b.name + "» из приложения?\n" +
-                            "Сопряжение на самом ПК останется (отзыв — claude-mobile --device).")
+                            "Сопряжение на самом ПК останется (отзыв — opencode-mobile --device).")
                     .setPositiveButton("Удалить", (d, w) -> {
                         boolean wasActive = b.fp != null && b.fp.equalsIgnoreCase(store.activeFp());
                         store.remove(b.fp);
@@ -660,7 +660,7 @@ public class MainActivity extends Activity {
             box.addView(inet);
             if (b.internet && b.nodeTicket == null) {
                 box.addView(themedText("Нет p2p-адреса этого ПК: подключитесь к нему по WiFi,\n" +
-                        "включив на нём интернет-доступ (claude-mobile --device → i).", "#f59e0b", 12));
+                        "включив на нём интернет-доступ (opencode-mobile --device → i).", "#f59e0b", 12));
             }
         }
 
@@ -751,7 +751,7 @@ public class MainActivity extends Activity {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
 
-        box.addView(themedText("На новом ПК выполните claude-mobile --qr\n" +
+        box.addView(themedText("На новом ПК выполните opencode-mobile --qr\n" +
                 "и отсканируйте QR-код, либо введите код:", C_MUTED, 14));
 
         Button scan = themedBtn("Сканировать QR-код", C_GREEN);
@@ -1153,7 +1153,7 @@ public class MainActivity extends Activity {
             new Thread(() -> {
                 try {
                     String host = prefs.getString("useHost", prefs.getString("host", null));
-                    int port = prefs.getInt("usePort", prefs.getInt("port", 8790));
+                    int port = prefs.getInt("usePort", prefs.getInt("port", 8890));
                     String token = prefs.getString("token", null);
                     String fp = prefs.getString("fp", null);
                     if (host == null || token == null || sttFile == null || !sttFile.exists()) {

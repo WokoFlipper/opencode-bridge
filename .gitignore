@@ -1,8 +1,12 @@
 # --- Секреты и личные данные (НИКОГДА не коммитить) ---
-bridge/config.json          # личные пути/прокси; создаётся из config.example.json
-bridge/certs/               # TLS-ключи моста и iroh-ключ
-bridge/pairings.json        # токены доверенных устройств
-bridge/internet.json        # состояние p2p-доступа
+# личные пути/прокси; создаётся из config.example.json
+bridge/config.json
+# TLS-ключи моста и iroh-ключ
+bridge/certs/
+# токены доверенных устройств
+bridge/pairings.json
+# состояние p2p-доступа
+bridge/internet.json
 bridge/certs/tunnel-allow.txt
 *.pem
 *.key

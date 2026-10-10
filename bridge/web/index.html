@@ -8,7 +8,7 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws://127.0.0.1:* wss://127.0.0.1:*; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#0f172a">
-<title>Claude Bridge</title>
+  <title>OpenCode Bridge</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="stylesheet" href="/vendor/xterm.css">
 <link rel="stylesheet" href="style.css">
@@ -30,7 +30,7 @@
 
   <main id="termwrap">
     <div id="terminal"></div>
-    <div id="placeholder">Нет активной сессии.<br>Нажмите ＋, чтобы запустить Claude Code.</div>
+    <div id="placeholder">Нет активной сессии.<br>Нажмите ＋, чтобы запустить opencode.</div>
   </main>
   <button id="toBottom" class="hidden" title="В конец">▼</button>
 
@@ -58,7 +58,7 @@
       <button data-key="ctrlc">^C</button>
     </div>
     <div id="inputrow">
-      <input id="msg" type="text" placeholder="Сообщение для Claude…" autocomplete="off">
+      <input id="msg" type="text" placeholder="Сообщение для opencode…" autocomplete="off">
       <button id="send">➤</button>
     </div>
   </footer>
@@ -72,12 +72,12 @@
   </dialog>
 
   <dialog id="newDialog">
-    <h3>Новая сессия Claude Code</h3>
+    <h3>Новая сессия opencode</h3>
     <label>Каталог проекта:</label>
     <select id="projectSel"></select>
     <input id="projectCustom" type="text" placeholder="…или свой путь">
-    <label class="chk"><input type="checkbox" id="optResume"> --resume (выбрать прошлую сессию)</label>
-    <label class="chk"><input type="checkbox" id="optDanger"> --dangerously-skip-permissions</label>
+    <label class="chk"><input type="checkbox" id="optResume"> --continue (продолжить последнюю сессию)</label>
+    <label class="chk"><input type="checkbox" id="optDanger"> --fork (ответвить копию, требует --continue)</label>
     <div class="row">
       <button id="createOk">Запустить</button>
       <button id="createCancel">Отмена</button>

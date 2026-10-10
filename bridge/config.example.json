@@ -1,13 +1,13 @@
 {
-  "port": 8790,
+  "port": 8890,
   "host": "0.0.0.0",
-  "claudeCommand": "claude",
-  "claudeArgs": [],
+  "opencodeCommand": "opencode",
+  "opencodeArgs": [],
   "defaultCwd": "",
   "projects": [],
   "env": {},
   "scrollbackBytes": 1048576,
-  "mdnsName": "claude-bridge",
+  "mdnsName": "opencode-bridge",
   "sttPython": "python3",
   "sttModel": "large-v3",
   "sttLanguage": "en"

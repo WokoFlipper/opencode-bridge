@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 'use strict';
-// claude-mobile: запустить Claude Code через мост и зеркалировать сессию
+// opencode-mobile: запустить opencode через мост и зеркалировать сессию
 // в этом терминале. Телефон видит ту же сессию и может вмешиваться.
 //
-//   claude-mobile [args…]    новая сессия в текущем каталоге; все аргументы
-//                            передаются claude (--resume, --continue,
-//                            --dangerously-skip-permissions и т.д.)
-//   claude-mobile -l         список сессий
-//   claude-mobile -a [id]    подключиться к сессии (без id — к последней живой)
-//   claude-mobile --device   доверенные устройства: просмотр и отзыв
-//   claude-mobile --qr       показать QR-код сопряжения (мост должен работать)
+//   opencode-mobile [args…]    новая сессия в текущем каталоге; все аргументы
+//                            передаются opencode (run -c/--continue,
+//                            -s/--session, -m/--model и т.д.)
+//   opencode-mobile -l         список сессий
+//   opencode-mobile -a [id]    подключиться к сессии (без id — к последней живой)
+//   opencode-mobile --device   доверенные устройства: просмотр и отзыв
+//   opencode-mobile --qr       показать QR-код сопряжения (мост должен работать)
 //
 // Ctrl+\  — отсоединиться (сессия продолжает жить, телефон остаётся подключён)
 
@@ -17,25 +17,32 @@ const path = require('path');
 const readline = require('readline');
 const WebSocket = require(path.join(__dirname, 'node_modules', 'ws'));
 
-const BRIDGE = process.env.CLAUDE_BRIDGE_URL || 'wss://127.0.0.1:8790/ws';
+const BRIDGE = process.env.OPENCODE_BRIDGE_URL || process.env.CLAUDE_BRIDGE_URL || 'wss://127.0.0.1:8890/ws';
 const args = process.argv.slice(2);
 
-const USAGE = `claude-mobile — Claude Code через мост (зеркало на телефон)
+const USAGE = `opencode-mobile — opencode через мост (зеркало на телефон)
 
-  claude-mobile [args…]     новая сессия в текущем каталоге; аргументы
-                            передаются самому claude (--resume, --continue…)
-  claude-mobile -l          список сессий
-  claude-mobile -a [id]     подключиться к сессии (без id — к последней живой)
-  claude-mobile --device    доверенные устройства: просмотр и отзыв
-  claude-mobile --qr        QR-код сопряжения
-  claude-mobile -h          эта справка
+  opencode-mobile [args…]     новая сессия в текущем каталоге; аргументы
+                             передаются самому opencode (run -c/--continue,
+                             -s/--session, -m/--model…)
+  opencode-mobile -l          список сессий
+  opencode-mobile -a [id]     подключиться к сессии (без id — к последней живой)
+  opencode-mobile --device    доверенные устройства: просмотр и отзыв (TUI)
+  opencode-mobile devices [--json]  список доверенных устройств (скриптуемо)
+  opencode-mobile revoke <id|номер> [-y]  отозвать устройство (без -y спросит)
+  opencode-mobile internet [on|off|status]  p2p-доступ через интернет
+  opencode-mobile --qr        QR-код сопряжения
+  opencode-mobile -h          эта справка
 
-Ctrl+\\ — отсоединиться: сессия продолжит жить, вернуться — claude-mobile -a.
-Завершить сессию по-настоящему: выйти из claude (Ctrl+C дважды или /exit)
+Управление устройствами — только с этого ПК (мост принимает
+devices/revoke/setInternet только от локального клиента).
+
+Ctrl+\\ — отсоединиться: сессия продолжит жить, вернуться — opencode-mobile -a.
+Завершить сессию по-настоящему: выйти из opencode (Ctrl+C или /exit)
 или долгим нажатием на её вкладку в приложении на телефоне.`;
 
-// Частые опечатки в НАШИХ флагах ловим до создания сессии: иначе «claude --l»
-// молча запустил бы сессию, claude отверг бы флаг и умер с загадочным
+// Частые опечатки в НАШИХ флагах ловим до создания сессии: иначе «opencode --l»
+// молча запустил бы сессию, opencode отверг бы флаг и умер с загадочным
 // «[сессия завершена]».
 const TYPOS = new Map([
   ['--l', '-l'], ['-list', '-l'],
@@ -85,29 +92,30 @@ let createdAtMs = 0; // когда МЫ создали сессию — для �
 
 function doCreate() {
   createdAtMs = Date.now();
-  const shown = args.length ? 'claude ' + args.join(' ') : 'claude';
+  const shown = args.length ? 'opencode ' + args.join(' ') : 'opencode';
   console.log(`Запускаю: ${shown}  (каталог ${process.cwd()})`);
   send({ type: 'create', cwd: process.cwd(), args });
 }
 
 /**
- * Создание сессии; перед запуском с --resume/--continue предупреждаем о живых
- * сессиях в этом же каталоге: если беседа ещё открыта в одной из них, claude
- * не сможет продолжить тот же файл и молча создаст КОПИЮ беседы (форк) —
- * так появляются дубликаты в списке resume.
+ * Создание сессии; перед запуском с -c/--continue/-s/--session предупреждаем
+ * о живых сессиях в этом же каталоге: без --fork продолжение подхватит
+ * состояние активной беседы, а параллельная живая сессия скорее всего значит,
+ * что продолжать надо attach'ем, а не новой сессией.
+ * opencode штатно умеет --fork для явного ответвления.
  */
 function maybeCreate(sessionsList) {
   const resumeLike = args.some((a) =>
-    a === '--resume' || a === '-r' || a === '--continue' || a === '-c');
+    a === '--continue' || a === '-c' || a === '--session' || a === '-s');
   const liveHere = sessionsList.filter((s) => s.alive && s.cwd === process.cwd());
   if (!resumeLike || !liveHere.length) { doCreate(); return; }
 
   console.log('⚠ В этом каталоге уже есть живые сессии:');
   for (const s of liveHere) console.log(`    ${s.id}\t${s.title}`);
-  console.log('Если ваша беседа ещё открыта в одной из них, resume создаст её КОПИЮ.');
-  console.log(`Вернуться в живую сессию: claude-mobile -a ${liveHere[liveHere.length - 1].id}`);
+  console.log('Если беседа ещё открыта в одной из них, продолжение без --fork подхватит то же состояние.');
+  console.log(`Вернуться в живую сессию: opencode-mobile -a ${liveHere[liveHere.length - 1].id}`);
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  rl.question('Всё равно продолжить с resume? [y/N]: ', (ans) => {
+  rl.question('Всё равно создать новую сессию с continue? [y/N]: ', (ans) => {
     rl.close();
     if (/^[yд]/i.test(ans.trim())) doCreate();
     else die('Отменено.');
@@ -121,7 +129,7 @@ function enterRaw() {
   process.stdin.resume();
   process.stdin.on('data', (d) => {
     if (d.length === 1 && d[0] === 0x1c) { // Ctrl+\
-      die('\r\n[отсоединился — сессия продолжает работать; вернуться: claude-mobile -a]\r');
+      die('\r\n[отсоединился — сессия продолжает работать; вернуться: opencode-mobile -a]\r');
     }
     send({ type: 'input', id: sid, data: d.toString('utf8') });
   });
@@ -141,6 +149,25 @@ ws.on('message', (rawMsg) => {
       if (args[0] === '--device' || args[0] === '--devices') {
         send({ type: 'internet' }); // придёт раньше devices — меню покажет статус
         send({ type: 'devices' });
+      } else if (args[0] === 'devices') {
+        send({ type: 'devices' }); // ответ напечатает devices-print ниже
+      } else if (args[0] === 'revoke') {
+        if (!args[1] || args[1] === '-h' || args[1] === '--help') {
+          die('Использование: opencode-mobile revoke <id|номер> [-y]', 1);
+        }
+        send({ type: 'devices' }); // по списку резолвим номер/id, потом шлём отзыв
+      } else if (args[0] === 'internet') {
+        const sub = args[1] || 'status';
+        if (sub === 'on' || sub === 'off') {
+          send({ type: 'setInternet', enabled: sub === 'on' });
+          // сервер разошлёт свежий internet-статус всем — наш internet-print ниже
+          // его поймает и выйдет; страховка — явный запрос чуть позже
+          setTimeout(() => send({ type: 'internet' }), 800);
+        } else if (sub === 'status') {
+          send({ type: 'internet' });
+        } else {
+          die('Использование: opencode-mobile internet [on|off|status]', 1);
+        }
       } else if (args[0] === '--qr') {
         send({ type: 'pairinfo' });
       } else if (args[0] === '-l' || args[0] === '--list') {
@@ -153,10 +180,10 @@ ws.on('message', (rawMsg) => {
         const target = args[1]
           ? m.sessions.find((s) => s.id === args[1])
           : m.sessions.filter((s) => s.alive).pop();
-        if (!target) die('Живых сессий нет. Запустите: claude-mobile', 1);
+        if (!target) die('Живых сессий нет. Запустите: opencode-mobile', 1);
         else attach(target.id);
       } else {
-        // все остальные аргументы уходят самому claude
+        // все остальные аргументы уходят самому opencode
         maybeCreate(m.sessions);
       }
       break;
@@ -174,28 +201,35 @@ ws.on('message', (rawMsg) => {
     case 'exit':
       if (m.id === sid) {
         let msg = `\r\n[сессия завершена, код ${m.exitCode}]`;
-        // сессию создали мы, и claude умер почти сразу с ошибкой —
+        // сессию создали мы, и opencode умер почти сразу с ошибкой —
         // почти наверняка он не принял переданные аргументы
         if (createdAtMs && m.exitCode !== 0 && Date.now() - createdAtMs < 15000 && args.length) {
-          msg += `\r\nclaude вышел сразу после старта — возможно, не принял аргументы: claude ${args.join(' ')}`;
-          msg += '\r\nСправка: claude-mobile -h';
+          msg += `\r\nopencode вышел сразу после старта — возможно, не принял аргументы: opencode ${args.join(' ')}`;
+          msg += '\r\nСправка: opencode-mobile -h';
         }
         die(msg, m.exitCode === 0 ? 0 : 1);
       }
       break;
     case 'devices':
       if (args[0] === '--device' || args[0] === '--devices') deviceTui(m);
+      else if (args[0] === 'devices') devicesPrint(m);
+      else if (args[0] === 'revoke') revokeFlow(m);
       break;
     case 'internet':
       inetState = m;
+      if (args[0] === 'internet' && !inetDone) {
+        inetDone = true;
+        console.log(fmtInet(m));
+        process.exit(0);
+      }
       break;
     case 'pairinfo': {
       const qrcode = require(path.join(__dirname, 'node_modules', 'qrcode-terminal'));
-      console.log('\nСопряжение нового устройства с Claude Bridge');
+      console.log('\nСопряжение нового устройства с OpenCode Bridge');
       console.log(`Адрес моста: ${m.host}:${m.port}`);
       if (m.internet) console.log(`Доступ через интернет: ${fmtInet(m.internet)}`);
       console.log(`Код для ручного ввода: ${m.code}  (действует ${m.ttlMin || 10} минут)\n`);
-      qrcode.generate(JSON.stringify({ cb: 1, host: m.host, port: m.port, code: m.code, fp: m.fp }),
+      qrcode.generate(JSON.stringify({ ob: 1, host: m.host, port: m.port, code: m.code, fp: m.fp }),
         { small: true }, (q) => { console.log(q); process.exit(0); });
       break;
     }
@@ -206,10 +240,53 @@ ws.on('message', (rawMsg) => {
 
 let rl = null;
 let inetState = null;
+let inetDone = false;
+let revokeSent = false;
+
+// ------------------------------- Скриптуемое управление (без TUI)
+
+function devicesPrint(m) {
+  if (args.includes('--json')) {
+    console.log(JSON.stringify(m.devices, null, 2));
+  } else {
+    if (!m.devices.length) console.log('(нет сопряжённых устройств)');
+    m.devices.forEach((d, i) => {
+      console.log(`${i + 1}. ${d.id}  ${d.name}  (добавлено ${d.addedAt})`);
+    });
+  }
+  process.exit(0);
+}
+
+function revokeFlow(m) {
+  if (revokeSent) {
+    // сервер прислал обновлённый список после отзыва — показываем итог
+    console.log('Отозвано. Осталось устройств: ' + m.devices.length);
+    devicesPrint(m);
+    return;
+  }
+  const want = args[1];
+  const n = parseInt(want, 10);
+  const dev = m.devices[Number.isInteger(n) ? n - 1 : -1] ||
+    m.devices.find((d) => d.id === want || d.id.startsWith(want));
+  if (!dev) die(`Устройство «${want}» не найдено. Смотри: opencode-mobile devices`, 1);
+  const go = () => {
+    revokeSent = true;
+    send({ type: 'revokeDevice', id: dev.id });
+  };
+  if (args.includes('-y') || args.includes('--yes')) go();
+  else {
+    const q = readline.createInterface({ input: process.stdin, output: process.stdout });
+    q.question(`Отозвать «${dev.name}» (${dev.id})? Устройство сразу потеряет доступ [y/N]: `, (yn) => {
+      q.close();
+      if (/^[yд]/i.test(yn.trim())) go();
+      else die('Отменено.');
+    });
+  }
+}
 
 function fmtInet(s) {
   if (!s) return 'статус неизвестен';
-  if (!s.available) return 'недоступен: не собран bridge/bin/claude-tunnel';
+  if (!s.available) return 'недоступен: не собран bridge/bin/opencode-tunnel';
   if (!s.enabled) return 'выключен';
   let line = 'ВКЛЮЧЁН' + (s.ticket ? '' : ' (p2p-endpoint запускается…)');
   if (s.peers && s.peers.length) {

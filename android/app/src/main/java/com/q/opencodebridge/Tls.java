@@ -1,4 +1,4 @@
-package com.q.claudebridge;
+package com.q.opencodebridge;
 
 import java.security.MessageDigest;
 import java.security.cert.CertificateException;
