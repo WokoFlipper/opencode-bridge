@@ -130,6 +130,13 @@ fail-closed внутрь — как у автора).
 вкладка Actions → последний зелёный ран → Artifacts.
 Запуск CI — обычный `git push` (нужен аппрув владельца по гейту «да»).
 
+Статус 2026-10-11: сборка исправлена, CI зелёный — `opencode-tunnel`
+(linux x86_64, ~3 МБ) и APK 0.1.1 (`versionCode 2`, ~5 МБ,
+`com.q.opencodebridge`, внутри `lib/arm64-v8a/libopencode-tunnel.so` +
+`assets/web`) собираются на каждый push и лежат в Artifacts. По пути
+вылечены три ошибки workflow: кавычки в `packages` setup-android,
+`ANDROID_NDK_HOME` мимо реального SDK-рута, actions v4 → v5.
+
 Статус 2026-10-10: собрано локально без CI — `bridge/bin/opencode-tunnel`
 (x86_64, 7.1 МБ, `--help` OK) и APK 6.4 МБ (`com.q.opencodebridge`, minSdk 26,
 внутри `lib/arm64-v8a/libopencode-tunnel.so` + `assets/web`). Тулчейн:
