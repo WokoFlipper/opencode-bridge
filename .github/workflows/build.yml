@@ -29,8 +29,6 @@ jobs:
   apk:
     name: APK (aarch64 .so + assembleDebug)
     runs-on: ubuntu-latest
-    env:
-      ANDROID_NDK_HOME: ${{ github.workspace }}/android-sdk/ndk/26.3.11579264
     steps:
       - uses: actions/checkout@v5
 
@@ -49,6 +47,7 @@ jobs:
       - name: Install NDK
         run: |
           "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --install "ndk;26.3.11579264"
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/26.3.11579264" >> "$GITHUB_ENV"
 
       - uses: dtolnay/rust-toolchain@stable
         with:
