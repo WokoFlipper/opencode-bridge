@@ -53,12 +53,12 @@ public final class LocalGateway {
             uiSock = bind(38471);
             wsSock = bind(38472);
         } catch (Exception e) {
-            Log.e(TAG, "не удалось поднять локальный шлюз", e);
+            Log.e(TAG, Lang.s("could not start the local gateway"), e);
             return;
         }
         uiPort = uiSock.getLocalPort();
         wsPort = wsSock.getLocalPort();
-        Log.i(TAG, "интерфейс: http://127.0.0.1:" + uiPort + ", ws-прокси: " + wsPort);
+        Log.i(TAG, Lang.s("UI: http://127.0.0.1:") + uiPort + Lang.s(", ws proxy: ") + wsPort);
         acceptLoop("gw-static", uiSock, (s) -> serveStatic(app, s));
         acceptLoop("gw-wsproxy", wsSock, (s) -> proxyWs(app, s));
     }

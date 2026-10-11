@@ -380,21 +380,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
-name = "opencode-tunnel"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "data-encoding",
- "iroh",
- "iroh-tickets",
- "libc",
- "serde_json",
- "tokio",
- "tokio-stream",
-]
-
-[[package]]
 name = "cmov"
 version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2314,6 +2299,21 @@ name = "opaque-debug"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
+
+[[package]]
+name = "opencode-tunnel"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "data-encoding",
+ "iroh",
+ "iroh-tickets",
+ "libc",
+ "serde_json",
+ "tokio",
+ "tokio-stream",
+]
 
 [[package]]
 name = "openssl-probe"

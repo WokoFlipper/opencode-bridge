@@ -111,7 +111,9 @@ node server.js
 On first start the bridge:
 - creates `config.json` from `config.example.json`;
 - generates a self-signed TLS certificate in `bridge/certs/`;
-- prints a **QR code and pairing code** for the phone.
+- shows its status (running + connected client count).
+
+No QR or pairing code is printed at startup — they are issued only on demand (see [Pairing](#4-pairing)).
 
 Then edit `bridge/config.json` (see [Configuration](#configuration)).
 
@@ -152,11 +154,11 @@ Grab the APK from [Releases](../../releases) (`opencode-bridge-*.apk`, debug-sig
 
 ### 4. Pairing
 
-1. Start the bridge on the PC — it shows a QR code (or run `bridge/opencode-mobile --qr` in any terminal).
-2. In the app tap **"Add computer" → "Scan QR code"** and point the camera. Instead of QR you can type the short code manually — the app will then ask you to verify the certificate fingerprint against the one shown in the PC terminal.
+1. Run `bridge/opencode-mobile --qr` in any PC terminal — it shows a QR code and a short code.
+2. In the app tap **"Add computer" → "Scan QR code"** and point the camera. Instead of QR you can type the short code manually — the app will then ask you to verify the certificate fingerprint (checked against the bridge response).
 3. Done: the phone remembers the PC and reconnects automatically on the same network.
 
-The code is one-time with a 10-minute TTL — this is the author's deliberate design (a glimpsed code dies with the process; restarts can't stretch the brute-force window). A fresh code anytime — `opencode-mobile --qr`.
+The code is one-time with a 5-minute TTL: one code — one device, a fresh code is issued right after use. A fresh code anytime — `opencode-mobile --qr`.
 
 ### 5. Access away from home (p2p, no public IP)
 

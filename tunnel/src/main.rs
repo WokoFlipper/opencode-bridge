@@ -28,8 +28,8 @@ use tokio_stream::StreamExt;
 
 const ALPN: &[u8] = b"opencode-bridge/1";
 
-/// Ограничения от DoS-амплификации: один телефон использует 1 соединение и
-/// горстку потоков, эти пределы с большим запасом покрывают легитимный трафик.
+/// Anti-DoS-amplification caps: one phone uses 1 connection and a handful
+/// of streams; these limits cover legitimate traffic with a wide margin.
 const MAX_CONNS: usize = 32;
 const MAX_STREAMS_PER_CONN: usize = 64;
 
@@ -146,12 +146,12 @@ fn node_allowed(allow_file: &Option<PathBuf>, remote: &str) -> bool {
 
 fn load_or_create_secret(path: &Path) -> Result<SecretKey> {
     if path.exists() {
-        // Утечка секрета = кража p2p-личности. Открываем файл РОВНО ОДИН РАЗ с
-        // O_NOFOLLOW: симлинк → ошибка (ELOOP), а подмену пути между проверкой и
-        // использованием исключаем — все операции (stat/chmod/чтение) идут по
-        // этому fd, а не по имени (никакого TOCTOU). Слишком открытые права
-        // чиним через тот же fd (fchmod); если ужесточить не удалось —
-        // ОТКАЗЫВАЕМСЯ использовать ключ (fail-closed), а не читаем его как есть.
+        // Secret leak = stolen p2p identity. Open the file EXACTLY ONCE with
+        // O_NOFOLLOW: symlink → ELOOP error, and path swaps between check and
+        // use are excluded — all ops (stat/chmod/read) go through this fd,
+        // not the name (no TOCTOU). Overly open permissions are fixed through
+        // the same fd (fchmod); if hardening fails we REFUSE to use the key
+        // (fail-closed) instead of reading it as-is.
         use std::io::Read;
         use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
         let mut f = std::fs::OpenOptions::new()
@@ -333,9 +333,9 @@ async fn run_listen(
     allow_file: Option<PathBuf>,
     allow_any: bool,
 ) -> Result<()> {
-    // Fail-closed по умолчанию: без allowlist слушатель пробрасывает ЛЮБОЙ
-    // узел интернета на локальный порт моста, дающий сетевое доверие. Отказываем,
-    // если не задан ни --allow-file, ни явный --allow-any.
+    // Fail-closed by default: without an allowlist the listener forwards ANY
+    // internet node to the bridge trust-bearing local port. Refuse
+    // unless --allow-file or explicit --allow-any is given.
     if allow_file.is_none() && !allow_any {
         return Err(anyhow!(
             "refusing to listen without --allow-file (pass --allow-any to serve every node)"
@@ -378,9 +378,10 @@ async fn run_listen(
         let allow_file = allow_file.clone();
         tokio::spawn(async move {
             let _permit = permit; // released when the connection task ends
-            // Тайм-аут рукопожатия: slow-loris-пир иначе держал бы слот соединения
-            // (permit) до исчерпания MAX_CONNS. 5с — с запасом на relay-путь, но
-            // вдвое меньше окна удержания слота неаутентифицированным пиром.
+            // Handshake timeout: a slow-loris peer would otherwise hold the
+            // connection slot (permit) until MAX_CONNS is exhausted. 5s leaves
+            // headroom for the relay path, yet is half the window an
+            // unauthenticated peer may hold a slot.
             let conn = match tokio::time::timeout(Duration::from_secs(5), incoming).await {
                 Ok(Ok(c)) => c,
                 Ok(Err(e)) => {
@@ -407,9 +408,9 @@ async fn run_listen(
             loop {
                 match conn.accept_bi().await {
                     Ok((send, recv)) => {
-                        // Перепроверяем allowlist на КАЖДЫЙ новый поток: если узел
-                        // отозвали (мост переписал allow-file), новые потоки уже
-                        // не пройдут — соединение закрывается.
+                        // Re-check the allowlist on EVERY new stream: if the node
+                        // was revoked (bridge rewrote the allow-file), new streams
+                        // no longer pass — the connection closes.
                         if !node_allowed(&allow_file, &remote) {
                             eprintln!("conn {id}: node {remote} revoked, closing connection");
                             drop((send, recv));

@@ -35,8 +35,8 @@ term.open($('#terminal'));
 
 term.onData((data) => send({ type: 'input', id: current, data }));
 
-// Локальный терминал зеркалит фактический размер PTY (сообщает сервер).
-// Свои размеры мы только "предлагаем" — сервер применит их, когда мы печатаем.
+// The local terminal mirrors the actual PTY size (reported by the server).
+// We only "propose" our sizes — the server applies them when we type.
 const wrap = $('#termwrap');
 
 function cellSize() {
@@ -63,10 +63,10 @@ const refit = () => {
 window.addEventListener('resize', refit);
 if (window.visualViewport) window.visualViewport.addEventListener('resize', refit);
 
-// Прокрутка пальцем.
-// Обычный буфер (bash и т.п.) — листаем scrollback xterm.
-// Альтернативный экран (TUI агента) — шлём приложению события колеса
-// мыши: TUI сам перерисует свою историю, включая восстановленную --continue.
+// Finger scrolling.
+// Normal buffer (bash etc.) — scroll xterm's scrollback.
+// Alternate screen (agent TUI) — send the app wheel events:
+// the TUI redraws its own history, including --continue restores.
 function sendScroll(lines) {
   if (!current) return;
   const n = Math.min(Math.abs(lines), 10);
@@ -75,27 +75,27 @@ function sendScroll(lines) {
   const row = Math.max(1, Math.round(term.rows / 2));
   let data = '';
   for (let i = 0; i < n; i++) {
-    if (mouse) data += `\x1b[<${lines > 0 ? 64 : 65};${col};${row}M`; // колесо вверх/вниз
+    if (mouse) data += `\x1b[<${lines > 0 ? 64 : 65};${col};${row}M`; // wheel up/down
     else data += lines > 0 ? '\x1b[5~' : '\x1b[6~'; // PageUp / PageDown
   }
-  // 'scroll' — как input, но не переключает "владельца размера" PTY
+  // 'scroll' — like input, but doesn't switch the PTY "size owner"
   send({ type: 'scroll', id: current, data });
 }
 
-// ------------------------------------------- выделение текста в терминале
-// Как в текстовых полях: долгое нажатие выделяет слово под пальцем, по краям
-// появляются два ползунка — каждый можно тянуть отдельно, посимвольно.
+// ------------------------------------------- text selection in the terminal
+// Like in text fields: a long press selects the word under the finger, with
+// two handles appearing at the edges — each draggable separately, char by char.
 
 const sel = {
   active: false,
-  a: null, // {line, col} — начало (инвариант: a <= b)
-  b: null, // {line, col} — конец (включительно)
+  a: null, // {line, col} — start (invariant: a <= b)
+  b: null, // {line, col} — end (inclusive)
 };
-const handleEnd = { A: 'a', B: 'b' }; // какой ползунок ведёт какой конец
+const handleEnd = { A: 'a', B: 'b' }; // which handle leads which end
 
 function cmpPos(p, q) { return (p.line - q.line) || (p.col - q.col); }
 
-// позиция ячейки буфера под координатами экрана
+// buffer cell position under screen coordinates
 function posAt(clientX, clientY) {
   const rect = term.element.getBoundingClientRect();
   const c = cellSize();
@@ -106,7 +106,7 @@ function posAt(clientX, clientY) {
   return { line, col };
 }
 
-// слово (непрерывный непробельный кусок) вокруг позиции
+// word (a contiguous non-space run) around a position
 function wordAt(pos) {
   const lineObj = term.buffer.active.getLine(pos.line);
   const text = lineObj ? lineObj.translateToString() : '';
@@ -120,8 +120,8 @@ function wordAt(pos) {
   return { a: { line: pos.line, col: s }, b: { line: pos.line, col: e } };
 }
 
-// Перетаскивание ползунков — через document: события не теряются,
-// даже если палец уехал с ползунка или под другие элементы.
+// Dragging handles — via document: events aren't lost even if the finger
+// slides off the handle or under other elements.
 let dragH = null; // { h, id }
 
 function makeHandle() {
@@ -141,28 +141,28 @@ const selhA = makeHandle();
 const selhB = makeHandle();
 
 function dragMoveTo(clientX, clientY) {
-  // ползунок висит под строкой: целимся на строку выше пальца
+  // the handle hangs below the line: aim at the line above the finger
   const p = posAt(clientX, clientY - 12 - cellSize().height / 2);
   const key = dragH.h === selhA ? 'A' : 'B';
   sel[handleEnd[key]] = p;
   if (cmpPos(sel.a, sel.b) > 0) {
-    // концы поменялись местами — палец теперь ведёт другой конец
+    // ends swapped places — the finger now leads the other end
     const t = sel.a; sel.a = sel.b; sel.b = t;
     const o = handleEnd.A; handleEnd.A = handleEnd.B; handleEnd.B = o;
   }
   applySelection();
 }
 
-// Автоскролл: палец/ползунок у верхнего или нижнего края терминала листает
-// историю, выделение тянется следом. Работает и при растягивании тем же
-// пальцем после долгого нажатия, и при перетаскивании ползунков.
-// В обычном буфере листаем scrollback xterm; в альтернативном экране
-// (TUI агента) шлём приложению колесо мыши — контент прокручивается
-// под выделением, копируется то, что подсвечено на экране.
+// Autoscroll: a finger/handle at the terminal's top or bottom edge scrolls
+// history, the selection stretches after it. Works both when stretching with
+// the same finger after a long press and when dragging handles.
+// In the normal buffer we scroll xterm's scrollback; on the alternate screen
+// (agent TUI) we send the app the mouse wheel — content scrolls under the
+// selection, and what is highlighted on screen gets copied.
 const AUTOSCROLL_ZONE = 48;
 let autoTimer = null;
 let lastDragXY = null;
-let autoMode = null; // 'handle' — тянем ползунок, 'press' — палец после long-press
+let autoMode = null; // 'handle' — dragging a handle, 'press' — finger after long-press
 
 function stopAutoScroll() {
   if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
@@ -177,10 +177,10 @@ function autoScrollDir(y) {
   return 0;
 }
 
-// растягивание выделения пальцем после долгого нажатия.
-// Якорь — исходное слово (pressWord); палец лишь расширяет выделение в свою
-// сторону, само слово всегда остаётся внутри. Так при автоскролле вверх
-// нижняя граница (якорь) не теряется.
+// stretching the selection with a finger after a long press.
+// Anchor — the original word (pressWord); the finger only extends the selection
+// toward itself, the word itself always stays inside. So on autoscroll up,
+// the bottom edge (anchor) never gets lost.
 let pressWord = null;
 function pressMoveTo(x, y) {
   if (!pressWord) return;
@@ -190,7 +190,7 @@ function pressMoveTo(x, y) {
   applySelection();
 }
 
-// снимок видимых строк — чтобы понять, на сколько TUI сдвинул контент
+// snapshot of visible lines — to tell how far the TUI shifted content
 function viewportSnapshot() {
   const b = term.buffer.active;
   const out = [];
@@ -201,7 +201,7 @@ function viewportSnapshot() {
   return out;
 }
 
-// на сколько строк сместился контент между снимками (0 — не понять)
+// how many lines the content shifted between snapshots (0 — can't tell)
 function detectShift(prev, next, dir) {
   let best = 0;
   let bestScore = 0;
@@ -220,7 +220,7 @@ function detectShift(prev, next, dir) {
   return bestScore >= 0.5 ? best : 0;
 }
 
-let altBusy = false; // ждём перерисовку TUI после посланного колеса
+let altBusy = false; // waiting for the TUI to redraw after the sent wheel
 
 function followFinger() {
   if (!lastDragXY || !sel.active) return;
@@ -234,9 +234,9 @@ function autoStep() {
   const d = autoScrollDir(lastDragXY.y);
   if (!d) { stopAutoScroll(); return; }
   if (term.buffer.active.type === 'alternate') {
-    // Историей управляет сам TUI (opencode): шлём колесо, а после его
-    // перерисовки сдвигаем выделение на столько же строк — оно остаётся
-    // «приклеенным» к тексту, пока тот не уедет за пределы экрана.
+    // The TUI itself (opencode) owns the history: we send the wheel, and after
+    // its redraw shift the selection by as many lines — it stays "glued"
+    // to the text until the text scrolls off screen.
     if (altBusy) return;
     altBusy = true;
     const prev = viewportSnapshot();
@@ -259,7 +259,7 @@ function autoStep() {
     return;
   }
   term.scrollLines(d);
-  followFinger(); // конец выделения остаётся под пальцем, захватывая прокрученное
+  followFinger(); // selection end stays under the finger, catching the scrolled part
 }
 
 function ensureAutoScroll(mode, x, y) {
@@ -318,27 +318,27 @@ function clearSel() {
   hideSelBar();
 }
 
-// выделение «едет» вместе с прокруткой и пересчётом размера
+// selection "rides" scrolling and resizes
 term.onScroll(() => { if (sel.active) positionHandles(); });
 term.onResize(() => { if (sel.active) clearSel(); });
 
-// Прокрутка пальцем + долгое нажатие (выделение слова).
+// Finger scrolling + long press (word selection).
 (() => {
   let ty = null;
   let tx = null;
   let selTimer = null;
-  let dragSel = false; // тем же пальцем после долгого нажатия тянем конец
+  let dragSel = false; // same finger after long press drags the end
   const el = term.element;
 
   el.addEventListener('touchstart', (e) => {
     if (e.touches.length !== 1) return;
-    // перехватываем жест целиком: иначе нативный long-press Android
-    // «съедает» палец (touchcancel) и растягивание выделения обрывается
+    // intercept the whole gesture: otherwise Android's native long-press
+    // "eats" the finger (touchcancel) and selection stretching breaks off
     e.preventDefault();
     ty = e.touches[0].clientY;
     tx = e.touches[0].clientX;
-    if (sel.active) clearSel(); // тап по терминалу снимает выделение
-    dragSel = false; // прошлый жест мог оборваться без touchend
+    if (sel.active) clearSel(); // tap on terminal clears selection
+    dragSel = false; // the previous gesture may have broken off without touchend
     clearTimeout(selTimer);
     const x = tx;
     const y = ty;
@@ -350,7 +350,7 @@ term.onResize(() => { if (sel.active) clearSel(); });
       const w = wordAt(posAt(x, y));
       sel.a = w.a;
       sel.b = w.b;
-      pressWord = { a: w.a, b: w.b }; // фиксированный якорь на всё время жеста
+      pressWord = { a: w.a, b: w.b }; // fixed anchor for the whole gesture
       applySelection();
       showSelBar();
       if (navigator.vibrate) navigator.vibrate(30);
@@ -364,13 +364,13 @@ term.onResize(() => { if (sel.active) clearSel(); });
     const dy = cy - ty;
     const dx = cx - tx;
     if (dragSel && sel.active) {
-      // продолжение долгого нажатия: ведём конец выделения (+автоскролл у краёв)
+      // long-press continues: lead the selection end (+edge autoscroll)
       pressMoveTo(cx, cy);
       ensureAutoScroll('press', cx, cy);
       e.preventDefault();
       return;
     }
-    // палец ощутимо поехал — это скролл, а не долгое нажатие
+    // finger moved noticeably — it's a scroll, not a long press
     if (Math.abs(dx) > 12 || Math.abs(dy) > 12) clearTimeout(selTimer);
     if (Math.abs(dx) > Math.abs(dy)) return;
     const ch = cellSize().height;
@@ -393,7 +393,7 @@ term.onResize(() => { if (sel.active) clearSel(); });
   el.addEventListener('touchcancel', endTouch, { passive: true });
 })();
 
-// -------------------------------------------------- копирование и вставка
+// -------------------------------------------------- copy and paste
 
 function showSelBar() { $('#selbar').classList.remove('hidden'); }
 function hideSelBar() { $('#selbar').classList.add('hidden'); }
@@ -406,7 +406,7 @@ $('#selCopy').addEventListener('click', () => {
     } else if (navigator.clipboard) {
       navigator.clipboard.writeText(text).catch(() => {});
     }
-    banner('📋 Скопировано: ' + text.length + ' симв.');
+    banner('📋 Copied: ' + text.length + ' chars.');
   }
   clearSel();
 });
@@ -417,20 +417,20 @@ $('#pasteBtn').addEventListener('click', async () => {
   if (typeof window.AndroidApp !== 'undefined' && window.AndroidApp.pasteText) {
     text = window.AndroidApp.pasteText() || '';
   } else if (navigator.clipboard) {
-    try { text = await navigator.clipboard.readText(); } catch { /* нет доступа */ }
+    try { text = await navigator.clipboard.readText(); } catch { /* no access */ }
   }
-  if (!text) { banner('📋 Буфер обмена пуст'); return; }
-  // вставляем в поле ввода (в позицию курсора) — отправка отдельной кнопкой
+  if (!text) { banner('📋 Clipboard empty'); return; }
+  // paste into the input field (at cursor) — sending is a separate button
   const inp = $('#msg');
   const s = inp.selectionStart == null ? inp.value.length : inp.selectionStart;
   const e = inp.selectionEnd == null ? inp.value.length : inp.selectionEnd;
   inp.value = inp.value.slice(0, s) + text + inp.value.slice(e);
   const np = s + text.length;
-  try { inp.setSelectionRange(np, np); } catch { /* не критично */ }
+  try { inp.setSelectionRange(np, np); } catch { /* non-critical */ }
   inp.focus();
 });
 
-// Кнопка «в конец»: появляется, когда мы пролистали вверх
+// "To end" button: appears when we've scrolled up
 const toBottom = $('#toBottom');
 toBottom.addEventListener('click', () => term.scrollToBottom());
 term.onScroll(() => {
@@ -446,14 +446,14 @@ term.onWriteParsed(() => {
 
 let reconnectTimer = null;
 function scheduleReconnect() {
-  if (reconnectTimer) return; // один цикл переподключения, не несколько
+  if (reconnectTimer) return; // one reconnect loop, not several
   reconnectTimer = setTimeout(() => { reconnectTimer = null; connect(); }, reconnectDelay);
   reconnectDelay = Math.min(reconnectDelay * 2, 10_000);
 }
 
 function bridgeWsUrl() {
-  // внутри приложения страница живёт локально (assets), а к мосту ведёт
-  // локальный ws-прокси с пиннингом TLS — адрес выдаёт приложение
+  // inside the app the page lives locally (assets), and the bridge is reached
+  // via the local TLS-pinned ws proxy — the app hands out the address
   if (typeof window.AndroidApp !== 'undefined' && window.AndroidApp.wsUrl) {
     return window.AndroidApp.wsUrl();
   }
@@ -462,12 +462,12 @@ function bridgeWsUrl() {
 }
 
 function connect() {
-  if (ws && (ws.readyState === 0 || ws.readyState === 1)) return; // уже подключаемся/подключены
+  if (ws && (ws.readyState === 0 || ws.readyState === 1)) return; // already connecting/connected
   ws = new WebSocket(bridgeWsUrl());
 
   ws.onopen = () => {
     reconnectDelay = 500;
-    setStatus('🟢'); // в панели показываем только индикатор, чтобы не занимать место
+    setStatus('🟢'); // panel shows just the dot to save space
     if (current) attach(current, false);
   };
 
@@ -500,7 +500,7 @@ function connect() {
         if (m.id === current) term.write(m.data);
         break;
       case 'exit':
-        if (m.id === current) term.write(`\r\n\x1b[31m[процесс завершён, код ${m.exitCode}]\x1b[0m\r\n`);
+        if (m.id === current) term.write(`\r\n\x1b[31m[process exited, code ${m.exitCode}]\x1b[0m\r\n`);
         break;
       case 'notify':
         onNotify(m);
@@ -512,7 +512,7 @@ function connect() {
   };
 
   ws.onclose = () => {
-    setStatus('🔴 реконнект…');
+    setStatus('🔴 reconnecting…');
     scheduleReconnect();
   };
   ws.onerror = () => ws.close();
@@ -547,7 +547,7 @@ function renderTabs() {
     b.textContent = s.title;
     if (s.alive && (s.status === 'waiting' || s.status === 'working')) {
       const dot = document.createElement('span');
-      dot.className = 'dot ' + s.status; // 🟠 ждёт ответа / 🔵 работает
+      dot.className = 'dot ' + s.status; // 🟠 awaiting approval / 🔵 working
       dot.textContent = ' ●';
       b.appendChild(dot);
     }
@@ -561,7 +561,7 @@ function renderTabs() {
 }
 
 function askKill(s) {
-  const q = s.alive ? `Завершить сессию «${s.title}»?` : `Убрать «${s.title}» из списка?`;
+  const q = s.alive ? `End session “${s.title}”?` : `Remove “${s.title}” from the list?`;
   if (window.confirm(q)) send({ type: s.alive ? 'kill' : 'remove', id: s.id });
 }
 
@@ -595,7 +595,7 @@ function onNotify(m) {
   renderTabs();
 }
 
-// первый тап: разрешаем звук и спрашиваем разрешение на уведомления
+// first tap: enable sound and ask for notification permission
 document.body.addEventListener('pointerdown', function once() {
   document.body.removeEventListener('pointerdown', once);
   try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch {}
@@ -622,10 +622,10 @@ function sendMessage() {
 }
 $('#msg').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); sendMessage(); } });
 
-// ------------------------------------------------------------ голосовой ввод
-// Долгое нажатие на кнопку отправки: запись через нативный мост (AndroidSTT),
-// распознавание — whisper на ПК. «Принять» кладёт текст в поле для правки,
-// «Ввод» отправляет его в opencode сразу.
+// ------------------------------------------------------------ voice input
+// Long press on the send button: recording via the native bridge (AndroidSTT),
+// recognition — whisper on the PC. “Accept” puts the text in the field for
+// editing, “Enter” sends it to opencode right away.
 
 const voice = {
   el: $('#voice'),
@@ -650,7 +650,7 @@ function voiceTick() {
 function voiceBegin() {
   if (!voiceAvailable() || voice.recording) return;
   if (!window.AndroidSTT.start()) {
-    banner('🎤 Нет доступа к микрофону — разрешите и попробуйте ещё раз');
+    banner('🎤 No microphone access — allow it and try again');
     return;
   }
   voice.recording = true;
@@ -660,7 +660,7 @@ function voiceBegin() {
   voice.el.classList.add('rec');
   voice.el.classList.remove('busy');
   voice.btns.classList.add('hidden');
-  voice.hint.textContent = 'Говорите… отпустите кнопку, когда закончите';
+  voice.hint.textContent = 'Speak… release the button when done';
   voiceTick();
   voice.tickTimer = setInterval(voiceTick, 500);
   if (navigator.vibrate) navigator.vibrate(40);
@@ -672,7 +672,7 @@ function voiceRelease() {
   clearInterval(voice.tickTimer);
   window.AndroidSTT.stop();
   voice.el.classList.remove('rec');
-  voice.hint.textContent = '«Принять» — текст в поле ввода, «Ввод» — сразу в opencode';
+  voice.hint.textContent = '“Accept” puts text in the input field, “Enter” sends it to opencode right away';
   voice.btns.classList.remove('hidden');
 }
 
@@ -687,7 +687,7 @@ function voiceTranscribe(mode) {
   voiceMode = mode;
   voice.btns.classList.add('hidden');
   voice.el.classList.add('busy');
-  voice.hint.textContent = 'Аудио обрабатывается…';
+  voice.hint.textContent = 'Processing audio…';
   voice.mic.textContent = '⏳';
   window.AndroidSTT.transcribe();
 }
@@ -696,7 +696,7 @@ window.sttResult = (text) => {
   voice.mic.textContent = '🎤';
   voiceClose();
   text = (text || '').trim();
-  if (!text) { banner('🎤 Речь не распознана'); return; }
+  if (!text) { banner('🎤 Speech not recognized'); return; }
   if (voiceMode === 'send' && current) {
     send({ type: 'input', id: current, data: text });
     send({ type: 'input', id: current, data: '\r' });
@@ -710,7 +710,7 @@ window.sttResult = (text) => {
 window.sttError = (msg) => {
   voice.mic.textContent = '🎤';
   voiceClose();
-  banner('🎤 Ошибка распознавания: ' + msg);
+  banner('🎤 Recognition error: ' + msg);
 };
 
 function banner(text) {
@@ -730,8 +730,8 @@ sendBtn.addEventListener('contextmenu', (e) => e.preventDefault());
 sendBtn.addEventListener('pointerdown', (e) => {
   voice.suppressClick = false;
   if (!voiceAvailable()) return;
-  // захват указателя: палец может дрожать и уезжать с кнопки —
-  // события всё равно приходят сюда, запись не оборвётся
+  // pointer capture: the finger may shake and slide off the button —
+  // events still land here, the recording won't break off
   try { sendBtn.setPointerCapture(e.pointerId); } catch {}
   voice.pressTimer = setTimeout(voiceBegin, 350);
 });
@@ -750,12 +750,12 @@ sendBtn.addEventListener('click', (e) => {
 // ------------------------------------------------------------ devices dialog
 
 $('#devBtn').addEventListener('click', () => {
-  // в приложении все настройки (компьютеры + устройства) — нативный экран
+  // in the app, all settings (computers + devices) live on the native screen
   if (typeof window.AndroidApp !== 'undefined') {
     window.AndroidApp.openSettings();
     return;
   }
-  $('#devList').textContent = 'Загрузка…';
+  $('#devList').textContent = 'Loading…';
   send({ type: 'devices' });
   $('#devDialog').showModal();
 });
@@ -765,7 +765,7 @@ function renderDevices(m) {
   const box = $('#devList');
   box.innerHTML = '';
   if (!m.devices.length) {
-    box.textContent = 'Нет сопряжённых устройств.';
+    box.textContent = 'No paired devices.';
     return;
   }
   for (const d of m.devices) {
@@ -780,22 +780,22 @@ function renderDevices(m) {
     if (d.id === m.self) {
       const self = document.createElement('span');
       self.className = 'self';
-      self.textContent = '● это устройство';
+      self.textContent = '● this device';
       name.appendChild(self);
     }
     const meta = document.createElement('div');
     meta.className = 'meta';
-    meta.textContent = 'добавлено ' + new Date(d.addedAt).toLocaleString();
+    meta.textContent = 'added ' + new Date(d.addedAt).toLocaleString();
     info.appendChild(name);
     info.appendChild(meta);
     row.appendChild(info);
 
     const btn = document.createElement('button');
-    btn.textContent = 'Отозвать';
+    btn.textContent = 'Revoke';
     btn.onclick = () => {
       const warn = d.id === m.self
-        ? `Отозвать ЭТО устройство? Понадобится повторное сопряжение.`
-        : `Отозвать «${d.name}»? Устройство потеряет доступ немедленно.`;
+        ? `Revoke THIS device? Will need re-pairing.`
+        : `Revoke “${d.name}”? The device will lose access immediately.`;
       if (window.confirm(warn)) send({ type: 'revokeDevice', id: d.id });
     };
     row.appendChild(btn);
@@ -825,16 +825,16 @@ $('#createOk').addEventListener('click', () => {
     if (!cargs.includes('--continue')) cargs.push('--continue');
     cargs.push('--fork');
   }
-  // continue при живой сессии в том же каталоге: продолжение подхватит
-  // состояние активной беседы — предлагаем вернуться в живую сессию,
-  // а --fork оставить для явного ответвления.
+  // --continue with a live session in the same directory: continuing picks up
+  // the active conversation's state — offer to go back to the live session,
+  // and keep --fork for explicit branching.
   if (cargs.includes('--continue')) {
     const norm = (p) => (p || '').replace(/\/+$/, '');
     const live = sessions.filter((s) => s.alive && norm(s.cwd) === norm(cwd));
     if (live.length && window.confirm(
-        `В «${cwd}» уже есть живая сессия: ${live[0].title}.\n` +
-        `Продолжение подхватит её состояние; для копии нужен --fork.\n\n` +
-        `Открыть живую сессию вместо этого?`)) {
+        `“${cwd}” already has a live session: ${live[0].title}.\n` +
+        `Continuing will pick up its state; a copy needs --fork.\n\n` +
+        `Open the live session instead?`)) {
       $('#newDialog').close();
       attach(live[0].id, true);
       return;

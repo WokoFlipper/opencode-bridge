@@ -18,8 +18,8 @@
 import type { Plugin } from "@opencode-ai/plugin";
 
 async function sendHook(hook_event_name: string, message: string): Promise<void> {
-  // Env читаем в момент события: плагин может жить дольше одной сессии,
-  // а OPENCODE_BRIDGE_SESSION выставляет keeper на каждую сессию отдельно.
+  // Read env at event time: the plugin may outlive a single session,
+  // while keeper sets OPENCODE_BRIDGE_SESSION per session.
   const sid = process.env.OPENCODE_BRIDGE_SESSION ?? "";
   if (!sid) return;
   const port = process.env.OPENCODE_BRIDGE_PORT ?? "8890";
@@ -50,16 +50,16 @@ const OpencodeBridge: Plugin = async () => {
     event: async ({ event }: { event: { type: string } & Record<string, unknown> }) => {
       switch (event.type) {
         case "session.idle":
-          await sendHook("Stop", "opencode завершил ответ");
+          await sendHook("Stop", "opencode finished responding");
           break;
         case "session.status":
           // working ping — lets the bridge clear stale phone notifications,
           // mirrors server.js handling of UserPromptSubmit/PostToolUse
-          await sendHook("UserPromptSubmit", "opencode работает");
+          await sendHook("UserPromptSubmit", "opencode is working");
           break;
         case "permission.asked":
         case "tui.toast.show":
-          await sendHook("Notification", String((event as Record<string, unknown>).message ?? "opencode ждёт подтверждения"));
+          await sendHook("Notification", String((event as Record<string, unknown>).message ?? "opencode is waiting for approval"));
           break;
       }
     },

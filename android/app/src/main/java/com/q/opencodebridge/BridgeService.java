@@ -52,8 +52,8 @@ public class BridgeService extends Service {
     public static final String INTERNAL_PERM = "com.q.opencodebridge.permission.INTERNAL";
     public static final String PREFS = "bridge";
 
-    private static final String CH_STATUS = "bridge_status";
-    private static final String CH_EVENTS = "opencode_events";
+    public static final String CH_STATUS = "bridge_status";
+    public static final String CH_EVENTS = "opencode_events";
     private static final int STATUS_ID = 1;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -78,7 +78,7 @@ public class BridgeService extends Service {
     // тот — onDown → postDelayed(connect) уже на мёртвом сервисе.
     private volatile boolean destroyed = false;
     private volatile boolean appVisible = false; // активити на экране
-    private String lastStatus = "Поиск моста в WiFi-сети…";
+    private String lastStatus = Lang.s("Searching for the bridge on the WiFi network…");
     private int retryMs = 2000;
     private int eventSeq = 100;
 
@@ -118,6 +118,7 @@ public class BridgeService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        Lang.init(this);
         createChannels();
 
         screenReceiver = new BroadcastReceiver() {
@@ -291,7 +292,7 @@ public class BridgeService extends Service {
                     JSONObject j = new JSONObject(new String(resp.getData(), 0, resp.getLength()));
                     if (j.optBoolean("opencodeBridge", j.optBoolean("claudeBridge", false))) {
                         String h = resp.getAddress().getHostAddress();
-                        Log.i(TAG, "UDP: мост найден " + h + ":" + j.optInt("port", 8890));
+                        Log.i(TAG, Lang.s("UDP: bridge found ") + h + ":" + j.optInt("port", 8890));
                         onBridgeFound(h, j.optInt("port", 8890),
                                 j.optString("fp", null), j.optString("host", h));
                     }
@@ -333,7 +334,7 @@ public class BridgeService extends Service {
                         resolving = false;
                         String h = i.getHost() != null ? i.getHost().getHostAddress() : null;
                         if (h == null) return;
-                        Log.i(TAG, "mDNS: мост найден " + h + ":" + i.getPort());
+                        Log.i(TAG, Lang.s("mDNS: bridge found ") + h + ":" + i.getPort());
                         String fp = null;
                         try {
                             byte[] f = i.getAttributes().get("fp");
@@ -354,10 +355,10 @@ public class BridgeService extends Service {
 
     // ------------------------------------------------------------ websocket
 
-    // ------------------------------------------------------ экономия батареи
-    // Режим bgMode в prefs: "always" — на связи всегда; "wifi" — в фоне только
-    // по WiFi; "app" — только пока приложение открыто. При открытом приложении
-    // связь есть в любом режиме.
+    // ------------------------------------------------------ battery saver
+    // bgMode in prefs: "always" — always connected; "wifi" — background on
+    // WiFi only; "app" — only while the app is open. With the app open,
+    // connection is up in any mode.
 
     private boolean isOnWifi() {
         try {
@@ -395,8 +396,8 @@ public class BridgeService extends Service {
     /** Текст паузы для уведомления: зависит от режима экономии. */
     private String pausedText() {
         return "wifi".equals(bgMode())
-                ? "Экономия батареи — в фоне подключусь по WiFi"
-                : "Экономия батареи — подключусь, когда откроете приложение";
+                ? Lang.s("Battery saver — will connect over WiFi in background")
+                : Lang.s("Battery saver — will connect when you open the app");
     }
 
     /** Разорвать связь ради экономии батареи (возобновится по событию). */
@@ -473,7 +474,7 @@ public class BridgeService extends Service {
         // сервера/прокси, а это долгоживущий bearer полного доступа (F16).
         // Мост читает bridgeToken и из cookie (requestToken).
         String url = "wss://" + eh + ":" + epn + "/ws";
-        Log.i(TAG, "connect wss://" + eh + ":" + epn + "/ws" + (tun ? " (туннель)" : ""));
+        Log.i(TAG, "connect wss://" + eh + ":" + epn + "/ws" + (tun ? Lang.s(" (tunnel)") : ""));
         ws = http.newWebSocket(new Request.Builder().url(url)
                 .header("Cookie", "bridgeToken=" + token).build(), new WebSocketListener() {
             @Override
@@ -490,7 +491,7 @@ public class BridgeService extends Service {
                 }
                 candHost = null; // кандидат разрешён
                 if (!tun && tunnelPort != 0) stopTunnel(); // LAN победил — туннель не нужен
-                updateStatus("Подключено (" + pathRu() + "): " + bridgeName());
+                updateStatus(Lang.s("Connected (") + pathRu() + "): " + bridgeName());
                 broadcastState();
                 socket.send("{\"type\":\"internet\"}"); // узнаём/обновляем p2p-адрес ПК
                 registerNode(socket); // сообщаем мосту наш p2p-NodeId для allowlist
@@ -503,7 +504,7 @@ public class BridgeService extends Service {
                     String type = m.optString("type");
                     if ("notify".equals(type)) {
                         showEvent(m.optString("title", "opencode"),
-                                m.optString("message", "Событие"),
+                                m.optString("message", Lang.s("Event")),
                                 m.optString("id", ""),
                                 m.optString("event", ""));
                     } else if ("status".equals(type)) {
@@ -520,7 +521,7 @@ public class BridgeService extends Service {
                                 if (arr.getJSONObject(i).optBoolean("alive")) alive++;
                             }
                         }
-                        updateStatus("Подключено (" + pathRu() + "): " + bridgeName() + " · сессий: " + alive);
+                        updateStatus(Lang.s("Connected (") + pathRu() + "): " + bridgeName() + Lang.s(" · sessions: ") + alive);
                     } else if ("internet".equals(type)) {
                         // мост сообщил свой p2p-адрес — запоминаем на случай отъезда
                         String afp = store.activeFp();
@@ -552,8 +553,8 @@ public class BridgeService extends Service {
                     if (afp != null) store.remove(afp);
                     token = null;
                     updateStatus(store.active() != null
-                            ? "Доступ отозван, переключаюсь на другой компьютер…"
-                            : "Доступ отозван — откройте приложение для сопряжения");
+                            ? Lang.s("Access revoked, switching to another computer…")
+                            : Lang.s("Access revoked — open the app to pair"));
                 }
                 onDown();
             }
@@ -572,7 +573,7 @@ public class BridgeService extends Service {
         // адрес, а не зависла на подсунутом. Свежий discovery снова его выставит (F4).
         candHost = null;
         if (was) {
-            updateStatus(allowedNow() ? "Связь потеряна, переподключение…" : pausedText());
+            updateStatus(allowedNow() ? Lang.s("Connection lost, reconnecting…") : pausedText());
         }
         broadcastState();
         handler.removeCallbacksAndMessages(null);
@@ -616,9 +617,9 @@ public class BridgeService extends Service {
     /** Человекочитаемый путь связи для уведомления и настроек. */
     private String pathRu() {
         if (!viaTunnel) return "WiFi";
-        if ("direct".equals(tunnelPath)) return "интернет, p2p напрямую";
-        if ("relay".equals(tunnelPath)) return "интернет, через relay";
-        return "интернет";
+        if ("direct".equals(tunnelPath)) return Lang.s("internet, direct p2p");
+        if ("relay".equals(tunnelPath)) return Lang.s("internet, via relay");
+        return Lang.s("internet");
     }
 
     // ----- постоянная p2p-личность телефона (NodeId) для allowlist моста -----
@@ -658,12 +659,12 @@ public class BridgeService extends Service {
                 proc.waitFor();
                 if (id != null && !id.isEmpty()) {
                     getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString("phoneNodeId", id).apply();
-                    Log.i(TAG, "p2p NodeId телефона готов");
+                    Log.i(TAG, Lang.s("phone p2p NodeId ready"));
                     // если уже подключены — сразу зарегистрируем
                     if (connected && ws != null) registerNode(ws);
                 }
             } catch (Exception e) {
-                Log.w(TAG, "не удалось получить NodeId телефона", e);
+                Log.w(TAG, Lang.s("could not get the phone NodeId"), e);
             } finally {
                 computingNodeId = false;
             }
@@ -689,7 +690,7 @@ public class BridgeService extends Service {
         java.io.File bin = tunnelBin();
         if (!bin.exists()) {
             tunnelBinMissing = true;
-            Log.w(TAG, "туннель недоступен: " + bin + " не найден");
+            Log.w(TAG, Lang.s("tunnel unavailable: ") + bin + Lang.s(" not found"));
             return;
         }
         final Process proc;
@@ -703,11 +704,11 @@ public class BridgeService extends Service {
                     "--secret-file", phoneKeyPath())
                     .start();
         } catch (Exception e) {
-            Log.w(TAG, "не удалось запустить туннель", e);
+            Log.w(TAG, Lang.s("could not start the tunnel"), e);
             return;
         }
         tunnelProc = proc;
-        updateStatus("ПК не виден в WiFi — пробую через интернет (p2p)…");
+        updateStatus(Lang.s("PC not visible on WiFi — trying the internet (p2p)…"));
         Thread t = new Thread(() -> {
             try (java.io.BufferedReader r = new java.io.BufferedReader(
                     new java.io.InputStreamReader(proc.getInputStream()))) {
@@ -724,10 +725,10 @@ public class BridgeService extends Service {
                         tunnelAddr = j.optString("addr", null);
                         broadcastState();
                         if (connected && viaTunnel) {
-                            updateStatus("Подключено (" + pathRu() + "): " + bridgeName());
+                            updateStatus(Lang.s("Connected (") + pathRu() + "): " + bridgeName());
                         }
                     } else if ("error".equals(ev)) {
-                        Log.w(TAG, "туннель: " + j.optString("message"));
+                        Log.w(TAG, Lang.s("tunnel: ") + j.optString("message"));
                     }
                 }
             } catch (Exception ignored) { }
@@ -759,12 +760,17 @@ public class BridgeService extends Service {
     // ------------------------------------------------------------ notifications
 
     private void createChannels() {
-        NotificationManager nm = getSystemService(NotificationManager.class);
-        NotificationChannel st = new NotificationChannel(CH_STATUS, "Состояние подключения",
+        createChannels(this);
+    }
+
+    /** (Re)register channels with names in the current language. */
+    public static void createChannels(Context ctx) {
+        NotificationManager nm = ctx.getSystemService(NotificationManager.class);
+        NotificationChannel st = new NotificationChannel(CH_STATUS, Lang.s("Connection status"),
                 NotificationManager.IMPORTANCE_MIN);
         st.setShowBadge(false);
         nm.createNotificationChannel(st);
-        NotificationChannel ev = new NotificationChannel(CH_EVENTS, "События opencode",
+        NotificationChannel ev = new NotificationChannel(CH_EVENTS, Lang.s("opencode events"),
                 NotificationManager.IMPORTANCE_HIGH);
         ev.enableVibration(true);
         // на локскрине содержимое (текст запроса opencode) скрыто по умолчанию
@@ -886,9 +892,9 @@ public class BridgeService extends Service {
         //  • API < 31 (нельзя защитить кнопку): не показываем кнопки вовсе.
         if ("Notification".equals(event) && sessionId != null && !sessionId.isEmpty()
                 && (!biolock || Build.VERSION.SDK_INT >= 31)) {
-            b.addAction(quickAction(sessionId, "1", "Да (1)", nid, biolock));
-            b.addAction(quickAction(sessionId, "2", "Всегда (2)", nid, biolock));
-            b.addAction(quickAction(sessionId, "\u001b", "Нет (Esc)", nid, biolock));
+            b.addAction(quickAction(sessionId, "1", Lang.s("Yes (1)"), nid, biolock));
+            b.addAction(quickAction(sessionId, "2", Lang.s("Always (2)"), nid, biolock));
+            b.addAction(quickAction(sessionId, "\u001b", Lang.s("No (Esc)"), nid, biolock));
         }
         if (sessionId != null && !sessionId.isEmpty()) {
             synchronized (eventNids) {

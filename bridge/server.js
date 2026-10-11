@@ -10,19 +10,18 @@ const crypto = require('crypto');
 const { execSync, spawn, spawnSync } = require('child_process');
 const { WebSocketServer } = require('ws');
 const { Bonjour } = require('bonjour-service');
-const qrcode = require('qrcode-terminal');
 
 const CONFIG_PATH = path.join(__dirname, 'config.json');
-// Первый запуск: личного config.json ещё нет — создаём его из примера.
-// config.json в .gitignore, так что личные пути/прокси не попадут в git.
+// First run: no personal config.json yet — create it from the example.
+// config.json is in .gitignore, so personal paths/proxy never land in git.
 if (!fs.existsSync(CONFIG_PATH)) {
   fs.copyFileSync(path.join(__dirname, 'config.example.json'), CONFIG_PATH);
-  console.log('  Создан config.json из config.example.json — отредактируйте его при необходимости');
+  console.log('  Created config.json from config.example.json — edit it as needed');
 }
 const CONFIG = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
-// config.json.env целиком попадает в окружение дочерних процессов сессий —
-// если туда положат секрет (напр. API-ключ), он не должен быть доступен другим
-// пользователям машины. Держим файл 0600.
+// config.json.env lands wholesale in the environment of session child
+// processes — if a secret ends up there (e.g. an API key), it must not be
+// visible to other users of the machine. Keep the file 0600.
 try { fs.chmodSync(CONFIG_PATH, 0o600); } catch {}
 const WEB_DIR = path.join(__dirname, 'web');
 const VENDOR = {
@@ -30,8 +29,8 @@ const VENDOR = {
   '/vendor/xterm.css': require.resolve('@xterm/xterm/css/xterm.css'),
   '/vendor/addon-fit.js': require.resolve('@xterm/addon-fit/lib/addon-fit.js'),
 };
-// Заголовки безопасности для статики: CSP как HTTP-заголовок (frame-ancestors
-// в <meta> игнорируется), плюс защита от кликджекинга и MIME-sniffing.
+// Security headers for static content: CSP as an HTTP header (frame-ancestors
+// in <meta> is ignored), plus clickjacking and MIME-sniffing protection.
 const SEC_HEADERS = {
   'Content-Security-Policy':
     "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
@@ -53,7 +52,7 @@ const MIME = {
 
 // ---------------------------------------------------------------- tls + auth
 
-// Самоподписанный сертификат: генерируется один раз, телефон пиннит его отпечаток.
+// Self-signed certificate: generated once, the phone pins its fingerprint.
 const CERT_DIR = path.join(__dirname, 'certs');
 if (!fs.existsSync(path.join(CERT_DIR, 'cert.pem'))) {
   fs.mkdirSync(CERT_DIR, { recursive: true, mode: 0o700 });
@@ -62,9 +61,9 @@ if (!fs.existsSync(path.join(CERT_DIR, 'cert.pem'))) {
     `-out "${CERT_DIR}/cert.pem" -days 3650 -nodes -subj "/CN=opencode-bridge" 2>/dev/null`
   );
 }
-// Приватный TLS-ключ и каталог с ключами не должны быть доступны другим
-// пользователям машины (openssl под umask 022 создаёт key.pem как 0644):
-// жёстко чиним каталог 0700 и key.pem 0600 (cert.pem — публичный, можно 0644).
+// The private TLS key and the key directory must not be visible to other
+// users of the machine (openssl under umask 022 creates key.pem as 0644):
+// harden the directory to 0700 and key.pem to 0600 (cert.pem is public, 0644 ok).
 try { fs.chmodSync(CERT_DIR, 0o700); } catch {}
 try { fs.chmodSync(path.join(CERT_DIR, 'key.pem'), 0o600); } catch {}
 const TLS = {
@@ -77,33 +76,48 @@ function pemToDer(pem) {
 }
 const FINGERPRINT = crypto.createHash('sha256').update(pemToDer(TLS.cert)).digest('hex');
 
-// Доверенные устройства. Код сопряжения новый на каждый запуск.
+// Trusted devices. The pairing code is fresh on every launch.
 const PAIR_FILE = path.join(__dirname, 'pairings.json');
 let pairings = { devices: [] };
-try { pairings = JSON.parse(fs.readFileSync(PAIR_FILE, 'utf8')); } catch { /* первый запуск */ }
-// pairings.json содержит токены устройств открытым текстом — файл только для
-// владельца (0600). Чиним права и на уже существующем файле (мог быть 0644).
+try { pairings = JSON.parse(fs.readFileSync(PAIR_FILE, 'utf8')); } catch { /* first run */ }
+// pairings.json holds device tokens in plaintext — owner-only file
+// (0600). Harden permissions on an existing file too (could be 0644).
 try { if (fs.existsSync(PAIR_FILE)) fs.chmodSync(PAIR_FILE, 0o600); } catch {}
-// Код сопряжения живёт 10 минут (новый — при старте или по opencode-mobile --qr).
-// Одноразовый и НЕ переживает рестарт — так задумано автором: подобранный код
-// умирает вместе с процессом, окно перебора не растянуть перезапуском.
-// Защита от перебора: 5 неверных попыток -> блокировка /pair на 15 минут.
-const PAIR_TTL_MS = 10 * 60 * 1000;
+// The pairing code lives 5 minutes (fresh one — at start or via opencode-mobile --qr).
+// One-time and does NOT survive restart — by author design: a guessed code
+// dies with the process, the brute-force window can't stretch past a restart.
+// Anti-bruteforce: 5 wrong attempts -> /pair block for 15 minutes.
+const PAIR_TTL_MS = 5 * 60 * 1000;
 let pairState = { code: '', expiresAt: 0 };
-// Блокировка перебора кода — ПОИСТОЧНИКУ (по IP), а не глобально: иначе 5
-// неверных попыток с одного адреса заблокировали бы сопряжение для всех.
+// Code-bruteforce lockout — PER SOURCE (by IP), not global: otherwise 5
+// wrong attempts from one address would block pairing for everyone.
 const pairGuard = new Map(); // ip -> { fails, blockedUntil }
-// Глобальный (по всем адресам) счётчик неверных попыток для ТЕКУЩЕГО кода.
-// Закрывает обход per-IP-throttle через много источников (в т.ч. 127.x у
-// процесса другого UID): даже с новых адресов перебор упирается в общий предел.
-// Сбрасывается только при генерации нового кода (F11/F14).
+// Global (all addresses) counter of wrong attempts for the CURRENT code.
+// Closes the per-IP-throttle bypass via many sources (incl. 127.x from a
+// different-UID process): guessing from fresh addresses still hits the common cap.
+// Reset only when a new code is generated (F11/F14).
 let pairFailTotal = 0;
 const PAIR_FAIL_TOTAL_MAX = 50;
+// Foot-window status: running line + live client count.
+function clientDesc(ws) {
+  const name = ws.deviceId === 'local' ? 'local PC'
+    : (pairings.devices.find((d) => d.id === ws.deviceId) || {}).name
+      || ws.deviceId || '?';
+  const role = ws.attached ? `session ${ws.attached}` : 'service';
+  return `${name} (${role})`;
+}
+function printStatus() {
+  console.log('');
+  console.log('  OpenCode Bridge running (HTTPS/WSS, port ' + CONFIG.port + ')');
+  console.log(`  Connected clients: ${allClients.size}`);
+  for (const ws of allClients) console.log(`    - ${clientDesc(ws)}`);
+  console.log('');
+}
 function regenPairCode() {
   pairFailTotal = 0;
   pairState = {
-    // 5 байт = 40 бит энтропии (было 24): вместе с общим лимитом попыток
-    // делает перебор за 10-минутное окно неосуществимым (F14)
+    // 5 bytes = 40 bits of entropy (was 24): together with the total attempt cap
+    // makes brute force within the 5-minute window infeasible (F14)
     code: crypto.randomBytes(5).toString('hex').toUpperCase(),
     expiresAt: Date.now() + PAIR_TTL_MS,
   };
@@ -111,58 +125,59 @@ function regenPairCode() {
 }
 regenPairCode();
 
-// Публичный id устройства — хэш токена: по нему можно ссылаться, не раскрывая токен
+// Public device id — token hash: referenceable without exposing the token
 function deviceIdOf(token) {
   return crypto.createHash('sha256').update(token).digest('hex').slice(0, 12);
 }
 for (const d of pairings.devices) if (!d.id) d.id = deviceIdOf(d.token);
 
 function savePairings() {
-  // 0600: токены устройств не должны быть доступны другим пользователям машины
+  // 0600: device tokens must not be readable by other users of the machine
   fs.writeFileSync(PAIR_FILE, JSON.stringify(pairings, null, 2), { mode: 0o600 });
   try { fs.chmodSync(PAIR_FILE, 0o600); } catch {}
 }
 
-// UID процесса-владельца моста. «Локальным» доверяем только соединениям того
-// же пользователя, а не любому процессу на loopback (иначе другой UID / песочный
-// сервис мог бы без токена получить права 'local' и выполнить произвольную команду).
+// UID of the bridge owner process. We trust as "local" only connections from
+// the same user — never any loopback process (otherwise a different UID / a
+// sandboxed service could gain 'local' rights and run arbitrary commands).
 const SELF_UID = typeof process.getuid === 'function' ? process.getuid() : -1;
 
-// "0100007F" (порядок байтов ядра, little-endian) -> "127.0.0.1"
+// "0100007F" (kernel byte order, little-endian) -> "127.0.0.1"
 function procIpv4(hex) {
   if (!/^[0-9A-Fa-f]{8}$/.test(hex)) return null;
   return [hex.slice(6, 8), hex.slice(4, 6), hex.slice(2, 4), hex.slice(0, 2)]
     .map((h) => parseInt(h, 16)).join('.');
 }
-// нормализуем адрес сокета к IPv4-виду (снимаем префикс v4-mapped ::ffff:)
+// normalize the socket address to IPv4 form (strip v4-mapped ::ffff: prefix)
 function norm4(ip) {
   if (!ip) return null;
   if (ip.startsWith('::ffff:')) ip = ip.slice(7);
   return /^\d+\.\d+\.\d+\.\d+$/.test(ip) ? ip : null;
 }
 /**
- * UID процесса на другом конце loopback-соединения (Linux, /proc/net/tcp).
- * Сравниваем ПОЛНЫЙ 4-кортеж (оба IP и оба порта) и требуем состояние
- * ESTABLISHED (01). Матч только по портам был бы неоднозначен: процесс другого
- * UID мог бы открыть 127.0.0.1:E -> 127.0.0.2:PORT (сервер слушает 0.0.0.0) с
- * тем же эфемерным портом E, что и соединение владельца к 127.0.0.1:PORT, и
- * подсунуть чужой UID из первой попавшейся строки. Полное сравнение адресов
- * изолирует именно наш сокет; ESTABLISHED отсекает TIME_WAIT-призраки.
- * Возвращает -1, если определить не удалось (isLocal тогда fail-closed).
+ * UID of the process at the other end of a loopback connection (Linux, /proc/net/tcp).
+ * We compare the FULL 4-tuple (both IPs and both ports) and require the
+ * ESTABLISHED (01) state. Matching on ports alone would be ambiguous: a
+ * different-UID process could open 127.0.0.1:E -> 127.0.0.2:PORT (the server
+ * listens on 0.0.0.0) with the same ephemeral port E as the owner's connection
+ * to 127.0.0.1:PORT, and slip in a foreign UID from the first matching row.
+ * Full address comparison isolates exactly our socket; ESTABLISHED cuts off
+ * TIME_WAIT ghosts.
+ * Returns -1 when it cannot be determined (isLocal then goes fail-closed).
  */
 function peerUid(socket) {
   try {
-    const rip = norm4(socket.remoteAddress); // локальный адрес клиента = наш remote
-    const lip = norm4(socket.localAddress);  // адрес назначения клиента = наш local
+    const rip = norm4(socket.remoteAddress); // client's local address = our remote
+    const lip = norm4(socket.localAddress);  // client's destination = our local
     const rport = socket.remotePort, lport = socket.localPort;
-    // только IPv4 (сервер слушает 0.0.0.0); для IPv6-bind нужен /proc/net/tcp6
+    // IPv4 only (server listens on 0.0.0.0); IPv6 bind would need /proc/net/tcp6
     if (!rip || !lip || !(rport > 0) || !(lport > 0)) return -1;
     let data;
     try { data = fs.readFileSync('/proc/net/tcp', 'utf8'); } catch { return -1; }
     const lines = data.split('\n');
     for (let i = 1; i < lines.length; i++) {
       const p = lines[i].trim().split(/\s+/);
-      if (p.length < 8 || p[3] !== '01') continue; // только ESTABLISHED
+      if (p.length < 8 || p[3] !== '01') continue; // ESTABLISHED only
       const lc = p[1].split(':'), rc = p[2].split(':');
       if (procIpv4(lc[0]) === rip && parseInt(lc[1], 16) === rport &&
           procIpv4(rc[0]) === lip && parseInt(rc[1], 16) === lport) {
@@ -177,13 +192,13 @@ function peerUid(socket) {
 function isLocal(req) {
   const a = req.socket.remoteAddress;
   const loopback = a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1';
-  // трафик из интернет-туннеля тоже приходит с loopback, но на отдельный порт:
-  // локальное доверие — только для основного порта (opencode-mobile, hooks)
+  // tunnel traffic also arrives from loopback, but on a separate port:
+  // local trust — main port only (opencode-mobile, hooks)
   if (!loopback || req.socket.localPort !== CONFIG.port) return false;
-  // UID не определить (не-POSIX / контейнер / hardened /proc) -> НЕ доверяем:
-  // fail-closed, лучше сломать локального клиента, чем пустить чужого
+  // UID indeterminable (non-POSIX / container / hardened /proc) -> NO trust:
+  // fail-closed, better to break a local client than to let a stranger in
   if (SELF_UID < 0) return false;
-  return peerUid(req.socket) === SELF_UID; // только процессы того же пользователя
+  return peerUid(req.socket) === SELF_UID; // same-user processes only
 }
 function requestToken(req, url) {
   const q = url.searchParams.get('token');
@@ -191,59 +206,59 @@ function requestToken(req, url) {
   const m = (req.headers.cookie || '').match(/(?:^|;\s*)bridgeToken=([a-f0-9]+)/);
   return m ? m[1] : null;
 }
-// Сравнение секретов постоянного времени (защита от тайминг-атак по токену/коду).
+// Constant-time secret comparison (timing-attack protection for token/code).
 function safeEqStr(a, b) {
   const ab = Buffer.from(String(a));
   const bb = Buffer.from(String(b));
   if (ab.length !== bb.length) return false;
   return crypto.timingSafeEqual(ab, bb);
 }
-/** Найти устройство по токену за постоянное время (без ранней утечки по '==='). */
+/** Find a device by token in constant time (no early '===' leak). */
 function deviceByToken(t) {
   if (!t) return null;
   for (const d of pairings.devices) if (safeEqStr(d.token, t)) return d;
   return null;
 }
 function authed(req, url) {
-  if (isLocal(req)) return true; // сам ПК всегда доверен
+  if (isLocal(req)) return true; // this PC is always trusted
   return !!deviceByToken(requestToken(req, url));
 }
-/** Отозвать устройство и немедленно разорвать его соединения. */
+/** Revoke a device and immediately tear down its connections. */
 function revokeDeviceById(id) {
   const idx = pairings.devices.findIndex((d) => d.id === id);
   if (idx < 0) return false;
   const name = pairings.devices[idx].name;
   pairings.devices.splice(idx, 1);
   savePairings();
-  writeAllowFile(); // отозванный NodeId больше не в allowlist туннеля
-  console.log(`\n  Устройство отозвано: ${name}`);
+  writeAllowFile(); // revoked NodeId leaves the tunnel allowlist
+  console.log(`\n  Device revoked: ${name}`);
   for (const c of allClients) {
     if (c.deviceId === id) { try { c.close(4401, 'revoked'); } catch { } }
   }
-  // Живое iroh-соединение отозванного узла не рвётся автоматически (allowlist
-  // проверяется при установке): перезапускаем туннель, чтобы сбросить все p2p-
-  // соединения — легитимные устройства тут же переподключатся уже по новому
-  // allowlist. Плюс сайдкар перепроверяет allowlist на каждый новый поток.
+  // A live iroh connection of a revoked node doesn't drop on its own (the
+  // allowlist is checked at setup): restart the tunnel to reset all p2p
+  // connections — legitimate devices reconnect immediately under the new
+  // allowlist. Plus the sidecar re-checks the allowlist on every new stream.
   if (tunnel && inet.enabled) { stopTunnel(); startTunnel(); }
   return true;
 }
 
 // ---------------------------------------------------------------- sessions
-// Каждая сессия живёт в отдельном процессе-хранителе (keeper.js) и общается
-// с мостом через unix-сокет: перезапуск моста не убивает Claude Code.
+// Each session lives in a separate keeper process (keeper.js) and talks
+// to the bridge over a unix socket: restarting the bridge doesn't kill opencode.
 
 const SESS_DIR = path.join(os.homedir(), '.opencode-bridge', 'sessions');
 fs.mkdirSync(SESS_DIR, { recursive: true, mode: 0o700 });
-// mkdir с mode подвержен umask, а на уже существующем каталоге mode не меняет:
-// сокеты хранителей — единственная защита от захвата чужой сессии тем же
-// пользователем, поэтому жёстко чиним 0700 (доступ только владельцу).
+// mkdir with mode is umask-sensitive, and mode doesn't change on an existing
+// dir: keeper sockets are the only protection against same-user hijack of a
+// foreign session, so harden to 0700 (owner access only).
 try { fs.chmodSync(SESS_DIR, 0o700); } catch {}
 
 const sessions = new Map(); // id -> session
 let seq = 0;
 
-// Защита от исчерпания ресурсов: потолок живых сессий и частоты их создания
-// (каждая сессия — отдельный процесс-хранитель + PTY-ребёнок).
+// Resource-exhaustion guard: cap on live sessions and their creation rate
+// (each session is a separate keeper process + PTY child).
 const MAX_SESSIONS = CONFIG.maxSessions || 24;
 const createTimes = new Map(); // deviceId -> [timestamps]
 function rateAllowCreate(deviceId) {
@@ -251,7 +266,7 @@ function rateAllowCreate(deviceId) {
   const key = deviceId || 'anon';
   const arr = (createTimes.get(key) || []).filter((t) => now - t < 60000);
   createTimes.set(key, arr);
-  if (arr.length >= 10) return false; // не более 10 создания сессий в минуту
+  if (arr.length >= 10) return false; // at most 10 session creations per minute
   arr.push(now);
   return true;
 }
@@ -270,10 +285,10 @@ function makeSession(meta) {
     clients: new Set(),
     alive: true,
     lastNotify: null,
-    status: 'idle', // idle | working | waiting — по hooks
+    status: 'idle', // idle | working | waiting — by hooks
     cols: meta.cols,
     rows: meta.rows,
-    lastInput: null, // клиент, печатавший последним — его размер и держим
+    lastInput: null, // last client to type — we keep their size
   };
 }
 
@@ -309,11 +324,11 @@ function connectKeeper(session, retries) {
         session.rows = m.rows;
         session.buffer = [m.buffer];
         session.bufferBytes = Buffer.byteLength(m.buffer);
-        // Клиент-создатель attach'ится РАНЬШЕ, чем мост дозвонится до
-        // хранителя (created уходит сразу, hello — спустя ретраи). Всё, что
-        // claude успел нарисовать до hello (напр. trust-промпт нового
-        // каталога), есть только в этом буфере — досылаем, иначе у клиента
-        // пустой экран до первого нажатия клавиши.
+        // The creating client attaches EARLIER than the bridge dials the
+        // keeper (created goes out immediately, hello — after retries). Everything
+        // opencode drew before hello (e.g. a new-directory trust prompt)
+        // exists only in this buffer — re-send it, otherwise the client
+        // faces an empty screen until the first keypress.
         if (m.buffer) {
           const shot = JSON.stringify({
             type: 'scrollback', id: session.id, data: m.buffer,
@@ -339,13 +354,13 @@ function connectKeeper(session, retries) {
     if (!session.sock && retries > 0) {
       setTimeout(() => connectKeeper(session, retries - 1), 300);
     } else if (!session.sock) {
-      // Хранитель недостижим: либо не поднялся, либо умер нечисто (краш,
-      // перезагрузка ПК) и не убрал свои файлы. Убираем их сами — иначе мост
-      // при каждом старте будет «восстанавливать» зомби-сессию и тут же её
-      // терять. Живые хранители сюда не попадают: их сокет отвечает.
+      // Keeper unreachable: either never came up or died dirty (crash,
+      // PC reboot) without cleaning its files. Remove them ourselves — otherwise
+      // the bridge would "restore" a zombie session on every start and lose it
+      // right away. Live keepers never land here: their socket answers.
       try { fs.unlinkSync(path.join(SESS_DIR, session.id + '.json')); } catch {}
       try { fs.unlinkSync(path.join(SESS_DIR, session.id + '.sock')); } catch {}
-      console.log(`  Сессия ${session.id}: хранитель не отвечает — файлы убраны`);
+      console.log(`  Session ${session.id}: keeper not responding — files removed`);
       dropSession(session, -1);
     }
   });
@@ -354,9 +369,9 @@ function connectKeeper(session, retries) {
   });
 }
 
-// Рабочий каталог удалённой (телефонной) сессии обязан лежать внутри
-// разрешённых проектов — иначе телефон мог бы запустить claude в произвольном
-// месте ФС. Локальные клиенты (opencode-mobile) не ограничены.
+// A remote (phone) session's working directory must sit inside the allowed
+// projects — otherwise the phone could launch opencode anywhere on the FS.
+// Local clients (opencode-mobile) are unrestricted.
 function isUnderAllowedRoot(dir) {
   const resolved = path.resolve(dir);
   return (CONFIG.projects || []).some((r) => {
@@ -367,9 +382,9 @@ function isUnderAllowedRoot(dir) {
 function remoteCwd(cwd) {
   const fallback = CONFIG.defaultCwd || os.homedir();
   if (!cwd) return fallback;
-  // realpath снимает симлинки: иначе ссылка ВНУТРИ разрешённого проекта
-  // (напр. /home/user/projects/link -> /etc) прошла бы лексическую проверку и
-  // claude стартовал бы вне проектов. Несуществующий путь -> fallback.
+  // realpath resolves symlinks: otherwise a link INSIDE an allowed project
+  // (e.g. /home/user/projects/link -> /etc) would pass the lexical check and
+  // opencode would start outside the projects. Nonexistent path -> fallback.
   let real;
   try { real = fs.realpathSync(cwd); } catch { return fallback; }
   return isUnderAllowedRoot(real) ? real : fallback;
@@ -377,14 +392,14 @@ function remoteCwd(cwd) {
 
 function createSession({ cwd, command, args, title, local }) {
   const id = 's' + (++seq) + '-' + crypto.randomBytes(3).toString('hex');
-  // Произвольную КОМАНДУ (бинарь) выбирают только локальные клиенты
-  // (opencode-mobile, десктоп-браузер): телефон всегда запускает настроенный
-  // claude — с телефона нельзя запустить /bin/sh и т.п.
-  // Аргументы (напр. --resume, --dangerously-skip-permissions) телефон задаёт
-  // сам — это его штатные опции запуска, а сопряжённое устройство и так имеет
-  // полный интерактивный контроль над PTY, так что ограничивать их смысла нет.
-  // А вот КАТАЛОГ у телефона ограничиваем разрешёнными проектами, чтобы claude
-  // нельзя было стартовать вне них (например, в ~/.ssh).
+  // Only local clients pick an arbitrary COMMAND (binary)
+  // (opencode-mobile, desktop browser): the phone always launches the configured
+  // opencode — no /bin/sh and the like from the phone.
+  // Arguments (e.g. --resume, --dangerously-skip-permissions) are the phone's
+  // own — these are its stock launch options, and a paired device already has
+  // full interactive control over the PTY, so limiting them is pointless.
+  // But we DO limit the phone's DIRECTORY to the allowed projects, so opencode
+  // can't start outside them (e.g. in ~/.ssh).
   const cmd = (local && command) ? command : (CONFIG.opencodeCommand || CONFIG.claudeCommand || 'opencode');
   const cmdArgs = (args && args.length) ? args : (CONFIG.opencodeArgs || CONFIG.claudeArgs || []);
   const dir = local ? (cwd || CONFIG.defaultCwd || os.homedir()) : remoteCwd(cwd);
@@ -400,8 +415,8 @@ function createSession({ cwd, command, args, title, local }) {
     rows: 30,
     scrollbackBytes: CONFIG.scrollbackBytes || 262144,
   };
-  // env НЕ пишем в meta-файл: process.env может содержать секреты, а файл
-  // остаётся на диске. Передаём окружение хранителю через сам процесс.
+  // Never write env into the meta file: process.env may hold secrets while the
+  // file stays on disk. Pass the environment to the keeper via the process itself.
   const childEnv = { ...process.env, ...CONFIG.env, OPENCODE_BRIDGE_SESSION: id, FORCE_COLOR: '3' };
   const metaPath = path.join(SESS_DIR, id + '.json');
   fs.writeFileSync(metaPath, JSON.stringify(meta));
@@ -420,7 +435,7 @@ function createSession({ cwd, command, args, title, local }) {
   return session;
 }
 
-// Восстановление живых сессий после перезапуска моста
+// Restoring live sessions after a bridge restart
 function restoreSessions() {
   let restored = 0;
   for (const f of fs.readdirSync(SESS_DIR)) {
@@ -429,7 +444,7 @@ function restoreSessions() {
     try {
       const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
       if (!fs.existsSync(metaPath.replace(/\.json$/, '.sock'))) {
-        fs.unlinkSync(metaPath); // хранитель умер вместе с сессией
+        fs.unlinkSync(metaPath); // keeper died with the session
         continue;
       }
       const n = parseInt(String(meta.id).slice(1), 10);
@@ -438,13 +453,13 @@ function restoreSessions() {
       sessions.set(meta.id, session);
       connectKeeper(session, 3);
       restored++;
-    } catch { /* битый meta-файл — пропускаем */ }
+    } catch { /* corrupt meta file — skip */ }
   }
-  if (restored) console.log(`  Восстановлено живых сессий: ${restored}`);
+  if (restored) console.log(`  Restored live sessions: ${restored}`);
 }
 
-// Политика размера PTY: «размер следует за тем, кто печатает».
-// Подключение зрителя размер не меняет.
+// PTY size policy: "size follows whoever types".
+// A watching connection doesn't change the size.
 function resizePty(session, cols, rows) {
   if (!session.alive || !(cols > 0) || !(rows > 0)) return;
   if (session.cols === cols && session.rows === rows) return;
@@ -469,7 +484,7 @@ function sessionList() {
 }
 
 // ---------------------------------------------------------------- stt
-// Постоянный python-воркер с faster-whisper: модель грузится один раз.
+// A long-lived python worker with faster-whisper: the model loads once.
 
 let sttProc = null;
 let sttQueue = [];
@@ -494,7 +509,7 @@ function ensureStt() {
       if (!line.trim()) continue;
       let m;
       try { m = JSON.parse(line); } catch { continue; }
-      if (m.ready) { console.log('  STT-модель загружена'); continue; }
+      if (m.ready) { console.log('  STT model loaded'); continue; }
       const job = sttQueue.shift();
       if (job) (m.error ? job.reject(new Error(m.error)) : job.resolve(m.text || ''));
     }
@@ -502,7 +517,7 @@ function ensureStt() {
   sttProc.stderr.on('data', (d) => process.stderr.write('[stt] ' + d));
   sttProc.on('exit', () => {
     sttProc = null;
-    for (const j of sttQueue) j.reject(new Error('STT-воркер завершился'));
+    for (const j of sttQueue) j.reject(new Error('STT worker exited'));
     sttQueue = [];
   });
 }
@@ -516,16 +531,16 @@ function transcribe(file) {
 }
 
 // ---------------------------------------------------------------- internet (p2p iroh)
-// Опциональный доступ через интернет: сайдкар opencode-tunnel (Rust + iroh)
-// принимает p2p-соединения и пробрасывает их на локальный порт туннеля.
-// Включается только явно: opencode-mobile --device -> «i».
+// Optional internet access: the opencode-tunnel sidecar (Rust + iroh)
+// accepts p2p connections and forwards them to the local tunnel port.
+// Enabled only explicitly: opencode-mobile --device -> “i”.
 
 const INET_FILE = path.join(__dirname, 'internet.json');
 const TUNNEL_BIN = path.join(__dirname, 'bin', 'opencode-tunnel');
-const TUNNEL_PORT = CONFIG.port + 2; // локальный порт для трафика из туннеля
-// allowlist iroh-узлов: телефон регистрирует свой NodeId (по LAN, через
-// защищённый WS), сюда пишутся id всех сопряжённых устройств. Туннель
-// перечитывает файл на каждое соединение и пускает только известные узлы.
+const TUNNEL_PORT = CONFIG.port + 2; // local port for tunnel traffic
+// allowlist of iroh nodes: the phone registers its NodeId (over LAN, via a
+// protected WS); ids of all paired devices land here. The tunnel re-reads the
+// file on every connection and admits known nodes only.
 const ALLOW_FILE = path.join(CERT_DIR, 'tunnel-allow.txt');
 
 function writeAllowFile() {
@@ -536,11 +551,11 @@ function writeAllowFile() {
 }
 
 let inet = { enabled: false };
-try { inet = { ...inet, ...JSON.parse(fs.readFileSync(INET_FILE, 'utf8')) }; } catch { /* дефолт */ }
+try { inet = { ...inet, ...JSON.parse(fs.readFileSync(INET_FILE, 'utf8')) }; } catch { /* default */ }
 
-let tunnel = null; // процесс opencode-tunnel
+let tunnel = null; // opencode-tunnel process
 let tunnelInfo = { ticket: null, nodeId: null };
-const tunnelPeers = new Map(); // id соединения -> { remote, path, addr, rttMs }
+const tunnelPeers = new Map(); // connection id -> { remote, path, addr, rttMs }
 let tunnelRestartTimer = null;
 
 function internetMsg() {
@@ -558,13 +573,13 @@ function broadcastInternet() { broadcast(internetMsg()); }
 function startTunnel() {
   if (tunnel || !inet.enabled) return;
   if (!fs.existsSync(TUNNEL_BIN)) {
-    console.error('  Интернет-доступ включён, но bridge/bin/opencode-tunnel не собран');
+    console.error('  Internet access enabled, but bridge/bin/opencode-tunnel is not built');
     return;
   }
-  // бесхозные туннели прошлых запусков (у них тот же ключ/NodeId) — убрать
-  // без шелла: путь установки не интерпретируется как команда
-  try { spawnSync('pkill', ['-f', TUNNEL_BIN + ' listen']); } catch { /* нет прав/нет процессов */ }
-  writeAllowFile(); // актуальный allowlist к моменту старта туннеля
+  // orphan tunnels from past runs (same key/NodeId) — remove without
+  // a shell: the install path must not be interpreted as a command
+  try { spawnSync('pkill', ['-f', TUNNEL_BIN + ' listen']); } catch { /* no rights/no processes */ }
+  writeAllowFile(); // current allowlist as of tunnel start
   const child = spawn(TUNNEL_BIN, [
     'listen',
     '--target', '127.0.0.1:' + TUNNEL_PORT,
@@ -584,7 +599,7 @@ function startTunnel() {
       try { m = JSON.parse(line); } catch { continue; }
       if (m.event === 'ready') {
         tunnelInfo = { ticket: m.ticket, nodeId: m.node_id };
-        console.log('  Интернет-доступ (iroh) активен, node: ' + (m.node_id || '').slice(0, 12) + '…');
+        console.log('  Internet access (iroh) active, node: ' + (m.node_id || '').slice(0, 12) + '…');
       } else if (m.event === 'conn') {
         tunnelPeers.set(m.id, { remote: m.remote, path: null, addr: null, rttMs: null });
       } else if (m.event === 'path') {
@@ -596,7 +611,7 @@ function startTunnel() {
       broadcastInternet();
     }
   });
-  child.stderr.on('data', () => { /* отладка сайдкара не нужна в логе моста */ });
+  child.stderr.on('data', () => { /* sidecar debug output not needed in bridge log */ });
   child.on('exit', () => {
     if (tunnel !== child) return;
     tunnel = null;
@@ -618,7 +633,7 @@ function stopTunnel() {
 function setInternet(enabled) {
   inet.enabled = !!enabled;
   fs.writeFileSync(INET_FILE, JSON.stringify(inet, null, 2));
-  console.log('\n  Доступ через интернет: ' + (inet.enabled ? 'ВКЛЮЧЁН' : 'выключен'));
+  console.log('\n  Internet access: ' + (inet.enabled ? 'ON' : 'off'));
   if (inet.enabled) startTunnel(); else stopTunnel();
 }
 
@@ -627,11 +642,11 @@ function setInternet(enabled) {
 function httpHandler(req, res) {
   const url = new URL(req.url, 'http://x');
 
-  // Сопряжение нового устройства: одноразовый код -> постоянный токен
+  // Pairing a new device: one-time code -> permanent token
   if (req.method === 'POST' && url.pathname === '/pair') {
-    // только по основному порту (LAN/локально): туннель поднимается уже ПОСЛЕ
-    // сопряжения, а пускать интернет-пиров к /pair (и давать им забивать
-    // блокировку перебора для всех) незачем
+    // main port only (LAN/local): the tunnel comes up only AFTER
+    // pairing, and letting internet peers hit /pair (and stuff
+    // everyone's brute-force lockout) is pointless
     if (req.socket.localPort !== CONFIG.port) { res.writeHead(404); res.end(); return; }
     let body = '';
     req.on('data', (c) => { body += c; if (body.length > 4096) req.destroy(); });
@@ -639,54 +654,61 @@ function httpHandler(req, res) {
       let p = {};
       try { p = JSON.parse(body || '{}'); } catch {}
       const ip = req.socket.remoteAddress || 'unknown';
-      // Бэкстоп роста карты: удаляем ТОЛЬКО адреса без активной блокировки —
-      // иначе атакующий сбрасывал бы свою блокировку, раздув карту (F11).
+      // Map-growth backstop: delete ONLY addresses with no active block —
+      // otherwise an attacker would reset their own block by inflating the map (F11).
       if (pairGuard.size > 4096) {
         const now = Date.now();
         for (const [k, v] of pairGuard) if (v.blockedUntil < now) pairGuard.delete(k);
       }
-      // Общий предел неверных попыток для текущего кода (перебор с многих
-      // адресов упирается сюда; сбрасывается только новым кодом) (F11/F14).
+      // Total cap on wrong attempts for the current code (guessing from many
+      // addresses dead-ends here; reset only by a new code) (F11/F14).
       if (pairFailTotal >= PAIR_FAIL_TOTAL_MAX) {
         res.writeHead(429, { 'Content-Type': 'application/json' });
-        res.end('{"error":"слишком много неверных попыток — обновите код: opencode-mobile --qr"}');
+        res.end('{"error":"too many wrong attempts — refresh the code: opencode-mobile --qr"}');
         return;
       }
       const g = pairGuard.get(ip) || { fails: 0, blockedUntil: 0 };
       if (Date.now() < g.blockedUntil) {
         res.writeHead(429, { 'Content-Type': 'application/json' });
-        res.end('{"error":"слишком много попыток — сопряжение с этого адреса заблокировано на 15 минут"}');
+        res.end('{"error":"too many attempts — pairing from this address is blocked for 15 minutes"}');
         return;
       }
       if (Date.now() > pairState.expiresAt) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
-        res.end('{"error":"код истёк — выполните opencode-mobile --qr на ПК"}');
+        res.end('{"error":"code expired — run opencode-mobile --qr on the PC"}');
         return;
       }
       if (!safeEqStr((p.code || '').toUpperCase(), pairState.code)) {
         g.fails++;
-        pairFailTotal++; // общий счётчик для текущего кода (F11)
+        pairFailTotal++; // total counter for the current code (F11)
         if (g.fails >= 5) {
           g.blockedUntil = Date.now() + 15 * 60 * 1000;
           g.fails = 0;
-          console.log('\n  Сопряжение с ' + ip + ' заблокировано на 15 минут (перебор кода)');
+          console.log('\n  Pairing with ' + ip + ' blocked for 15 minutes (code brute force)');
         }
         pairGuard.set(ip, g);
         res.writeHead(403, { 'Content-Type': 'application/json' });
-        res.end('{"error":"неверный код сопряжения"}');
+        res.end('{"error":"wrong pairing code"}');
         return;
       }
       pairGuard.delete(ip);
-      // Код одноразовый: гасим его сразу, чтобы одним подсмотренным кодом нельзя
-      // было сопрячь несколько устройств (и повторно — после отзыва) за 10 минут.
+      // The code is one-time: burn it immediately so one glimpsed code can't
+      // pair several devices (or re-pair after revoke) within the 5 minutes.
+      // Check-and-burn is a synchronous block with no await: two parallel
+      // requests physically can't both pass, the second always sees an expired code.
+      // Issue a fresh code right away so no dead code lingers in the terminal
+      // (QR for it — opencode-mobile --qr).
       pairState.expiresAt = 0;
+      regenPairCode();
+      console.log(`\n  Previous code used — new pairing code issued (5 minutes).`);
       const token = crypto.randomBytes(24).toString('hex');
-      // Имя устройства приходит от клиента: вырезаем управляющие символы
-      // (ANSI/escape), иначе они попали бы и в консоль оператора (подмена вывода,
-      // очистка экрана), и в UI телефона (F13). Одно значение — для хранения и лога.
+      // The device name comes from the client: strip control characters
+      // (ANSI/escape), otherwise they'd land in the operator console (output
+      // spoofing, screen clearing) and in the phone UI (F13). One value — for
+      // storage and log alike.
       const safeName = (String(p.name || '')
         .replace(/[\x00-\x1f\x7f-\x9f]/g, '')
-        .slice(0, 64)) || 'устройство';
+        .slice(0, 64)) || 'device';
       pairings.devices.push({
         id: deviceIdOf(token),
         token,
@@ -694,7 +716,7 @@ function httpHandler(req, res) {
         addedAt: new Date().toISOString(),
       });
       savePairings();
-      console.log(`\n  Сопряжено новое устройство: ${safeName}`);
+      console.log(`\n  Paired new device: ${safeName}`);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         token, fingerprint: FINGERPRINT, port: CONFIG.port, hostname: os.hostname(),
@@ -704,14 +726,14 @@ function httpHandler(req, res) {
     return;
   }
 
-  // Распознавание надиктованного аудио (телефон шлёт m4a, отвечаем текстом)
+  // Recognizing dictated audio (the phone sends m4a, we answer with text)
   if (req.method === 'POST' && url.pathname === '/stt') {
     if (!authed(req, url)) { res.writeHead(401); res.end(); return; }
-    // Ограничение очереди: один воркер обрабатывает записи по одной — не даём
-    // авторизованному клиенту забить память/очередь потоком загрузок.
+    // Queue cap: one worker processes recordings one by one — don't let
+    // an authorized client fill memory/queue with an upload stream.
     if (sttQueue.length >= (CONFIG.sttMaxQueue || 4)) {
       res.writeHead(503, { 'Content-Type': 'application/json' });
-      res.end('{"error":"очередь распознавания переполнена, повторите позже"}');
+      res.end('{"error":"recognition queue full, try again later"}');
       return;
     }
     const tmp = path.join(os.tmpdir(), 'cb-stt-' + crypto.randomBytes(6).toString('hex') + '.m4a');
@@ -719,8 +741,8 @@ function httpHandler(req, res) {
     const cleanup = () => { try { fs.unlinkSync(tmp); } catch {} };
     let size = 0;
     let overflow = false;
-    // Пишем загрузку сразу на диск, а не в память: 20 МБ × N параллельных
-    // запросов в RAM — вектор исчерпания памяти.
+    // Write the upload straight to disk, not memory: 20 MB × N parallel
+    // requests in RAM is a memory-exhaustion vector.
     req.on('data', (c) => {
       size += c.length;
       if (size > 20e6 && !overflow) {
@@ -729,25 +751,25 @@ function httpHandler(req, res) {
         req.destroy(); out.destroy(); cleanup();
       }
     });
-    // обрыв загрузки клиентом: transcribe не запустится ('finish' не наступит),
-    // поэтому временный файл надо удалить здесь, иначе он утечёт на диск
+    // client-aborted upload: transcribe never starts ('finish' won't come),
+    // so the temp file must be deleted here or it leaks onto the disk
     req.on('error', () => { try { out.destroy(); } catch {} cleanup(); });
     out.on('error', () => { cleanup(); try { res.writeHead(500); res.end(); } catch {} });
     req.pipe(out);
     out.on('finish', async () => {
-      if (overflow) return; // ответ уже отправлен, файл удалён
+      if (overflow) return; // response already sent, file deleted
       try {
         const text = await Promise.race([
           transcribe(tmp),
-          new Promise((_, rej) => setTimeout(() => rej(new Error('таймаут распознавания')), 180000)),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('recognition timeout')), 180000)),
         ]);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ text }));
       } catch (e) {
-        // деталь — только в лог ПК; клиенту общий текст (без внутренних путей)
-        console.error('[stt] ошибка распознавания:', e.message);
+        // detail goes to the PC log only; the client gets a generic text (no inner paths)
+        console.error('[stt] recognition error:', e.message);
         try { res.writeHead(500, { 'Content-Type': 'application/json' }); } catch {}
-        res.end(JSON.stringify({ error: 'не удалось распознать запись' }));
+        res.end(JSON.stringify({ error: 'could not recognize the recording' }));
       } finally {
         cleanup();
       }
@@ -764,18 +786,18 @@ function httpHandler(req, res) {
       try { payload = JSON.parse(body || '{}'); } catch { /* keep {} */ }
       const sid = req.headers['x-bridge-session'] || payload.bridge_session || '';
       const event = payload.hook_event_name || 'Notification';
-      const message = payload.message || payload.notification || (event === 'Stop' ? 'Claude завершил ответ' : 'Событие Claude Code');
+      const message = payload.message || payload.notification || (event === 'Stop' ? 'opencode finished responding' : 'opencode event');
       const s = sessions.get(sid);
-      // статус сессии для вкладок: работает / ждёт ответа / свободна.
-      // PostToolUse — ответ на запрос разрешения дан (в т.ч. на ПК): Claude снова работает.
+      // session status for tabs: working / awaiting approval / idle.
+      // PostToolUse — the permission request was answered (incl. on the PC): opencode works again.
       const status = {
         UserPromptSubmit: 'working',
         PostToolUse: 'working',
         Notification: 'waiting',
         Stop: 'idle',
       }[event];
-      // отдельное событие для телефона: по 'working' он гасит устаревшие
-      // уведомления — в том числе для сессий, которых уже нет в списке
+      // a separate event for the phone: on 'working' it clears stale
+      // notifications — including for sessions no longer on the list
       if (status && sid && (!s || s.status !== status)) {
         broadcast({ type: 'status', id: sid, status });
       }
@@ -783,7 +805,7 @@ function httpHandler(req, res) {
         s.status = status;
         broadcastSessions();
       }
-      // push-уведомления — только для событий, требующих внимания
+      // push notifications — only for events needing attention
       if (event === 'Notification' || event === 'Stop') {
         if (s) s.lastNotify = { event, message, at: Date.now() };
         broadcast({ type: 'notify', id: sid, event, message, title: s ? s.title : sid, at: Date.now() });
@@ -804,11 +826,11 @@ function httpHandler(req, res) {
   // static: vendor libs from node_modules, everything else from web/
   if (!authed(req, url)) {
     res.writeHead(401, { 'Content-Type': 'text/plain; charset=utf-8' });
-    res.end('401: устройство не сопряжено с мостом');
+    res.end('401: device not paired with the bridge');
     return;
   }
   const extraHeaders = {};
-  // токен пришёл в query -> выдаём cookie, чтобы css/js/websocket прошли сами
+  // token arrived in query -> issue a cookie so css/js/websocket pass on their own
   const qtoken = url.searchParams.get('token');
   if (qtoken) {
     extraHeaders['Set-Cookie'] =
@@ -820,8 +842,8 @@ function httpHandler(req, res) {
   } else {
     const rel = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
     file = path.join(WEB_DIR, path.normalize(rel));
-    // разделитель обязателен: без него сосед вида .../web-secret прошёл бы
-    // проверку startsWith(WEB_DIR) (префиксный баг)
+    // the separator is mandatory: without it a neighbour like .../web-secret
+    // would pass the startsWith(WEB_DIR) check (prefix bug)
     if (file !== WEB_DIR && !file.startsWith(WEB_DIR + path.sep)) {
       res.writeHead(403); res.end(); return;
     }
@@ -837,8 +859,8 @@ function httpHandler(req, res) {
   });
 }
 
-// Основной сервер (LAN + localhost) и отдельный локальный порт для
-// интернет-туннеля: isLocal() различает их по localPort.
+// Main server (LAN + localhost) plus a separate local port for the
+// internet tunnel: isLocal() tells them apart by localPort.
 const server = https.createServer(TLS, httpHandler);
 const tunnelServer = https.createServer(TLS, httpHandler);
 
@@ -878,6 +900,9 @@ wss.on('connection', (ws, req) => {
   const dev = deviceByToken(requestToken(req, connUrl));
   ws.deviceId = dev ? dev.id : (isLocal(req) ? 'local' : null);
   allClients.add(ws);
+  // phone (dis)connections refresh the foot-window client count (local CLI
+  // connects on every invocation — not worth reprinting for those)
+  if (ws.deviceId && ws.deviceId !== 'local') printStatus();
   ws.attached = null;
   ws.send(JSON.stringify({ type: 'sessions', sessions: sessionList(), projects: CONFIG.projects || [] }));
 
@@ -889,11 +914,11 @@ wss.on('connection', (ws, req) => {
     switch (m.type) {
       case 'create': {
         if (sessions.size >= MAX_SESSIONS) {
-          ws.send(JSON.stringify({ type: 'error', message: 'Достигнут предел числа сессий' }));
+          ws.send(JSON.stringify({ type: 'error', message: 'Session limit reached' }));
           break;
         }
         if (!rateAllowCreate(ws.deviceId)) {
-          ws.send(JSON.stringify({ type: 'error', message: 'Слишком часто — подождите немного' }));
+          ws.send(JSON.stringify({ type: 'error', message: 'Too frequent — wait a bit' }));
           break;
         }
         const created = createSession({
@@ -909,7 +934,7 @@ wss.on('connection', (ws, req) => {
         ws.attached = s.id;
         s.clients.add(ws);
         if (m.cols && m.rows) ws.desired = { cols: m.cols, rows: m.rows };
-        // зритель размер не меняет — только единственный клиент
+        // a watcher doesn't change the size — only the sole client does
         if (ws.desired && s.clients.size === 1) resizePty(s, ws.desired.cols, ws.desired.rows);
         ws.send(JSON.stringify({
           type: 'scrollback', id: s.id, data: s.buffer.join(''),
@@ -919,15 +944,15 @@ wss.on('connection', (ws, req) => {
       }
       case 'input':
         if (s && s.alive) {
-          if (s.lastInput !== ws) {
-            s.lastInput = ws; // клиент начал печатать — PTY подстраивается под него
+            if (s.lastInput !== ws) {
+              s.lastInput = ws; // client started typing — PTY adapts to them
             if (ws.desired) resizePty(s, ws.desired.cols, ws.desired.rows);
           }
           keeperSend(s, { t: 'in', d: m.data });
         }
         break;
       case 'scroll':
-        // прокрутка — не набор текста: не трогаем «владельца размера» PTY
+        // scrolling is not typing: don't touch the PTY "size owner"
         if (s && s.alive) keeperSend(s, { t: 'in', d: m.data });
         break;
       case 'resize':
@@ -947,17 +972,17 @@ wss.on('connection', (ws, req) => {
         ws.send(JSON.stringify({ type: 'sessions', sessions: sessionList(), projects: CONFIG.projects || [] }));
         break;
       case 'devices':
-        // список устройств — только локальным клиентам (десктоп-браузер,
-        // opencode-mobile); телефон управляет ПК через нативное меню, не этим
+        // device list — local clients only (desktop browser,
+        // opencode-mobile); the phone manages the PC via the native menu, not this
         if (ws.deviceId === 'local') ws.send(JSON.stringify(devicesMsg(ws)));
         break;
       case 'internet':
-        // статус интернет-доступа: телефон запоминает ticket на будущее
+        // internet-access status: the phone remembers the ticket for later
         ws.send(JSON.stringify(internetMsg()));
         break;
       case 'registerNode': {
-        // телефон сообщает свой постоянный iroh-NodeId (по LAN, через
-        // защищённый WS) — добавляем в allowlist туннеля этого устройства
+        // the phone reports its permanent iroh NodeId (over LAN, via a
+        // protected WS) — add it to this device's tunnel allowlist
         const nid = (m.nodeId || '').trim().toLowerCase();
         if (/^[0-9a-f]{64}$/.test(nid) && ws.deviceId && ws.deviceId !== 'local') {
           const dev = pairings.devices.find((d) => d.id === ws.deviceId);
@@ -965,21 +990,21 @@ wss.on('connection', (ws, req) => {
             dev.nodeId = nid;
             savePairings();
             writeAllowFile();
-            console.log(`  Зарегистрирован p2p-узел устройства «${dev.name}»`);
+            console.log(`  Registered device p2p node “${dev.name}”`);
           }
         }
         break;
       }
       case 'setInternet':
-        // включение/выключение — только с самого ПК (opencode-mobile --device)
+        // on/off — from this PC only (opencode-mobile --device)
         if (ws.deviceId === 'local') {
           setInternet(m.enabled);
           broadcastInternet();
         }
         break;
       case 'pairinfo':
-        // данные сопряжения — только локальным клиентам (opencode-mobile --qr);
-        // каждый запрос выдаёт свежий код на 10 минут
+        // pairing data — local clients only (opencode-mobile --qr);
+        // every request issues a fresh 5-minute code
         if (ws.deviceId === 'local') {
           const p = regenPairCode();
           ws.send(JSON.stringify({
@@ -994,10 +1019,10 @@ wss.on('connection', (ws, req) => {
         }
         break;
       case 'revokeDevice':
-        // отзыв устройств — только с самого ПК (opencode-mobile --device / десктоп),
-        // иначе сопряжённый телефон мог бы отозвать все остальные устройства.
-        // Список устройств тоже отдаём ТОЛЬКО локальному клиенту: удалённое
-        // устройство иначе прочитало бы id/имена/даты всех остальных (F12).
+        // device revoke — from this PC only (opencode-mobile --device / desktop),
+        // otherwise a paired phone could revoke every other device.
+        // The device list also goes to the local client ONLY: a remote
+        // device would otherwise read everyone else's id/names/dates (F12).
         if (ws.deviceId === 'local') {
           revokeDeviceById(m.id);
           ws.send(JSON.stringify(devicesMsg(ws)));
@@ -1007,8 +1032,10 @@ wss.on('connection', (ws, req) => {
   });
 
   ws.on('close', () => {
+    const wasPhone = ws.deviceId && ws.deviceId !== 'local';
     allClients.delete(ws);
     if (ws.attached) { const s = sessions.get(ws.attached); if (s) s.clients.delete(ws); }
+    if (wasPhone) printStatus();
   });
 });
 
@@ -1026,12 +1053,12 @@ function lanAddress() {
   return '127.0.0.1';
 }
 
-// UDP-обнаружение: телефон шлёт broadcast "OPENCODE_BRIDGE?" на порт+1,
-// мост отвечает unicast'ом с адресом. Надёжнее mDNS в замусоренных сетях.
+// UDP discovery: the phone broadcasts "OPENCODE_BRIDGE?" to port+1,
+// the bridge answers unicast with its address. More reliable than mDNS on noisy networks.
 const dgram = require('dgram');
 
-// Отвечаем только запросам из локальных сетей (RFC1918 / link-local / loopback):
-// маяк не должен раскрывать hostname+отпечаток и служить рефлектором наружу.
+// Answer only requests from local networks (RFC1918 / link-local / loopback):
+// the beacon must not leak hostname+fingerprint nor serve as an outward reflector.
 function isPrivateAddr(ip) {
   if (!ip) return false;
   if (ip === '127.0.0.1' || ip.startsWith('::ffff:127.')) return true;
@@ -1051,24 +1078,22 @@ function isPrivateAddr(ip) {
 const beacon = dgram.createSocket({ type: 'udp4', reuseAddr: true });
 beacon.on('message', (msg, rinfo) => {
   if (msg.toString().trim() === 'OPENCODE_BRIDGE?' && isPrivateAddr(rinfo.address)) {
-    // fp — публичный отпечаток сертификата: телефон по нему понимает,
-    // КАКОЙ из его сопряжённых компьютеров ответил
+    // fp — the public certificate fingerprint: the phone uses it to tell
+    // WHICH of its paired computers answered
     const reply = JSON.stringify({
       opencodeBridge: true, claudeBridge: true, port: CONFIG.port, host: os.hostname(), fp: FINGERPRINT,
     });
     beacon.send(reply, rinfo.port, rinfo.address);
   }
 });
-beacon.on('error', (e) => console.error('UDP beacon error (не критично):', e.message));
+beacon.on('error', (e) => console.error('UDP beacon error (non-critical):', e.message));
 beacon.bind(CONFIG.port + 1);
 
-// порт для трафика из интернет-туннеля — только loopback
+// port for internet-tunnel traffic — loopback only
 tunnelServer.listen(TUNNEL_PORT, '127.0.0.1');
 if (inet.enabled) startTunnel();
 
 server.listen(CONFIG.port, CONFIG.host, () => {
-  const ip = lanAddress();
-
   try {
     const bonjour = new Bonjour();
     bonjour.publish({
@@ -1078,33 +1103,21 @@ server.listen(CONFIG.port, CONFIG.host, () => {
       txt: { path: '/', fp: FINGERPRINT },
     });
   } catch (e) {
-    console.error('mDNS publish failed (не критично):', e.message);
+    console.error('mDNS publish failed (non-critical):', e.message);
   }
 
   restoreSessions();
 
-  const pairPayload = JSON.stringify({
-    ob: 1, host: ip, port: CONFIG.port, code: pairState.code, fp: FINGERPRINT,
-  });
-
+  // No QR/code at startup: the pairing code is issued on demand via
+  // opencode-mobile --qr (one code — one device, 5-minute TTL).
+  printStatus();
+  console.log('  Pairing code is issued on demand: opencode-mobile --qr');
   console.log('');
-  console.log('  OpenCode Bridge запущен (HTTPS/WSS, порт ' + CONFIG.port + ')');
-  console.log(`  Доверенных устройств: ${pairings.devices.length}` +
-    (pairings.devices.length ? ' — подключатся сами' : ''));
-  console.log('  Доступ через интернет: ' +
-    (inet.enabled ? 'включён (p2p iroh)' : 'выключен (включить: opencode-mobile --device)'));
-  console.log('');
-  console.log('  Добавить новое устройство: отсканируйте QR в приложении');
-  console.log(`  или введите код вручную:  ${pairState.code}  (действует 10 минут,`);
-  console.log('  свежий код в любой момент: opencode-mobile --qr)');
-  console.log('');
-  qrcode.generate(pairPayload, { small: true });
-  console.log(`  Отпечаток сертификата: ${FINGERPRINT.slice(0, 16)}…`);
 });
 
-// Перезапуск моста НЕ убивает сессии: они живут в отдельных хранителях.
-// А вот интернет-туннель — часть моста: его при выходе гасим, иначе при
-// KillMode=process он переживёт рестарт и задвоит iroh-endpoint.
+// Restarting the bridge does NOT kill sessions: they live in separate keepers.
+// But the internet tunnel is part of the bridge: kill it on exit, otherwise
+// under KillMode=process it outlives the restart and doubles the iroh endpoint.
 process.on('exit', () => { if (tunnel) { try { tunnel.kill(); } catch { } } });
 process.on('SIGINT', () => process.exit(0));
 process.on('SIGTERM', () => process.exit(0));

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 'use strict';
-// Хранитель сессии: отдельный процесс, который владеет PTY независимо от моста.
-// Мост может перезапускаться — сессия opencode продолжает жить.
-// Протокол: JSON-строки через unix-сокет рядом с meta-файлом.
+// Session keeper: a separate process owning the PTY independently of the bridge.
+// The bridge may restart — the opencode session keeps living.
+// Protocol: JSON lines over a unix socket next to the meta file.
 
 const fs = require('fs');
 const net = require('net');
@@ -12,14 +12,14 @@ const pty = require(path.join(__dirname, 'node_modules', 'node-pty'));
 const metaPath = process.argv[2];
 const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
 const sockPath = metaPath.replace(/\.json$/, '.sock');
-// Каталог сессий обязан быть 0700: сокет хранителя не имеет собственной
-// аутентификации, и доступ к нему = управление живой сессией Claude.
+// The sessions dir must be 0700: the keeper socket has no authentication
+// of its own, and access to it equals control over a live opencode session.
 try { fs.chmodSync(path.dirname(sockPath), 0o700); } catch {}
 try { fs.unlinkSync(sockPath); } catch {}
 
-// Окружение приходит от моста через process.env (в meta-файл его не пишут,
-// чтобы секреты не оставались на диске). meta.env — для совместимости со
-// старыми meta-файлами при первом запуске после обновления.
+// Environment comes from the bridge via process.env (never written into the
+// meta file, so secrets stay off disk). meta.env is only for compatibility
+// with old meta files on the first run after an upgrade.
 const term = pty.spawn(meta.cmd, meta.args || [], {
   name: 'xterm-256color',
   cols: meta.cols || 100,

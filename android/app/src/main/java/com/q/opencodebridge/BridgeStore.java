@@ -38,7 +38,7 @@ public final class BridgeStore {
 
         static Bridge fromJson(JSONObject j) {
             Bridge b = new Bridge();
-            b.name = j.optString("name", "компьютер");
+            b.name = j.optString("name", Lang.s("computer"));
             b.host = j.optString("host", null);
             b.port = j.optInt("port", 8890);
             b.token = j.optString("token", null);
@@ -64,7 +64,7 @@ public final class BridgeStore {
         if (token == null || fp == null) return;
         Bridge b = new Bridge();
         b.host = prefs.getString("host", null);
-        b.name = b.host != null ? b.host : "компьютер";
+        b.name = b.host != null ? b.host : Lang.s("computer");
         b.port = prefs.getInt("port", 8890);
         b.token = token;
         b.fp = fp;

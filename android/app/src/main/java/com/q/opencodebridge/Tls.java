@@ -46,7 +46,7 @@ public final class Tls {
                 if (fpHex == null) return; // TOFU при сопряжении
                 try {
                     if (!fingerprint(chain[0]).equalsIgnoreCase(fpHex)) {
-                        throw new CertificateException("Отпечаток сертификата моста не совпадает");
+                        throw new CertificateException(Lang.s("Bridge certificate fingerprint mismatch"));
                     }
                 } catch (CertificateException e) {
                     throw e;

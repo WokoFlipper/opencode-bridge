@@ -30,10 +30,11 @@ import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
-import com.google.mlkit.vision.barcode.common.Barcode;
-import com.google.mlkit.vision.codescanner.GmsBarcodeScanner;
-import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions;
-import com.google.mlkit.vision.codescanner.GmsBarcodeScanning;
+import com.google.zxing.BarcodeFormat;
+import com.journeyapps.barcodescanner.BarcodeCallback;
+import com.journeyapps.barcodescanner.BarcodeResult;
+import com.journeyapps.barcodescanner.DecoratedBarcodeView;
+import com.journeyapps.barcodescanner.DefaultDecoderFactory;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -61,6 +62,12 @@ public class MainActivity extends Activity {
     private BroadcastReceiver stateReceiver;
     private AlertDialog pcDialog;
 
+    // Встроенный QR-сканер (ZXing, без Play Services).
+    private static final int REQ_CAMERA = 2;
+    private DecoratedBarcodeView qrView = null;
+    private boolean qrShowing = false;
+    private boolean qrHandled = false;
+
     private SharedPreferences prefs;
     private BridgeStore store;
 
@@ -75,11 +82,14 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         prefs = getSharedPreferences(BridgeService.PREFS, MODE_PRIVATE);
         store = new BridgeStore(this);
+        Lang.init(this);
 
         if (Build.VERSION.SDK_INT >= 33 &&
                 checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1);
         }
+
+        askBatteryExemption();
 
         armScreenWatcher(getApplicationContext());
         startForegroundService(new Intent(this, BridgeService.class));
@@ -87,11 +97,42 @@ public class MainActivity extends Activity {
 
         applySecureFlag();
 
-        if (needLock()) {
-            showLockScreen();
+        if (needLock()) {            showLockScreen();
         } else {
             buildUi();
         }
+    }
+
+    /** Doze при погашенном экране душит сеть и роняет туннель/WS. */
+    private boolean isBattExempt() {
+        android.os.PowerManager pm =
+                (android.os.PowerManager) getSystemService(Context.POWER_SERVICE);
+        return pm != null && pm.isIgnoringBatteryOptimizations(getPackageName());
+    }
+
+    private void openBatterySettings() {
+        try {
+            startActivity(new Intent(
+                    android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    android.net.Uri.parse("package:" + getPackageName())));
+        } catch (Exception e) {
+            setPairStatus(Lang.s("Could not open battery settings"));
+        }
+    }
+
+    /** Одноразовый запрос при старте; постоянные статус и кнопка — в настройках. */
+    private void askBatteryExemption() {
+        if (isBattExempt()) return;
+        if (prefs.getBoolean("battAsked", false)) return;
+        prefs.edit().putBoolean("battAsked", true).apply();
+        new AlertDialog.Builder(this)
+                .setTitle(Lang.s("Background connection"))
+                .setMessage(Lang.s("To keep the bridge from dropping when the screen is off, ")
+                        + Lang.s("exempt OpenCode Mobile from battery optimization ")
+                        + Lang.s("on the next screen (otherwise Doze throttles the network and kills the tunnel)."))
+                .setPositiveButton(Lang.s("Allow"), (d, w) -> openBatterySettings())
+                .setNegativeButton(Lang.s("Later"), null)
+                .show();
     }
 
     /** При включённой биометрии прячем содержимое из «недавних» и от скриншотов. */
@@ -166,11 +207,11 @@ public class MainActivity extends Activity {
         icon.setTextSize(52);
         icon.setGravity(Gravity.CENTER);
         box.addView(icon);
-        TextView t = themedText("OpenCode Mobile защищён", C_TEXT, 18);
+        TextView t = themedText(Lang.s("OpenCode Mobile is locked"), C_TEXT, 18);
         t.setGravity(Gravity.CENTER);
         t.setPadding(0, dp(12), 0, dp(20));
         box.addView(t);
-        Button unlock = themedBtn("Разблокировать", C_BLUE);
+        Button unlock = themedBtn(Lang.s("Unlock"), C_BLUE);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 dp(220), LinearLayout.LayoutParams.WRAP_CONTENT);
         lp.gravity = Gravity.CENTER;
@@ -194,7 +235,7 @@ public class MainActivity extends Activity {
             android.hardware.biometrics.BiometricPrompt.Builder bb =
                     new android.hardware.biometrics.BiometricPrompt.Builder(this)
                             .setTitle("OpenCode Mobile")
-                            .setSubtitle("Подтвердите, что это вы");
+                            .setSubtitle(Lang.s("Confirm it’s you"));
             if (Build.VERSION.SDK_INT >= 30) {
                 bb.setAllowedAuthenticators(
                         android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_WEAK
@@ -215,7 +256,7 @@ public class MainActivity extends Activity {
             android.app.KeyguardManager km =
                     (android.app.KeyguardManager) getSystemService(KEYGUARD_SERVICE);
             Intent i = km == null ? null
-                    : km.createConfirmDeviceCredentialIntent("OpenCode Mobile", "Подтвердите, что это вы");
+                    : km.createConfirmDeviceCredentialIntent("OpenCode Mobile", Lang.s("Confirm it’s you"));
             if (i != null) startActivityForResult(i, 42);
             else unlockNow(); // блокировка экрана не настроена — не запираем насмерть
         }
@@ -262,7 +303,7 @@ public class MainActivity extends Activity {
         box.setPadding(pad, pad, pad, pad);
 
         TextView title = new TextView(this);
-        title.setText("Сопряжение с OpenCode Mobile");
+        title.setText(Lang.s("Pair with OpenCode Mobile"));
         title.setTextColor(Color.WHITE);
         title.setTextSize(22);
         title.setTypeface(null, Typeface.BOLD);
@@ -270,27 +311,27 @@ public class MainActivity extends Activity {
         box.addView(title);
 
         TextView hint = new TextView(this);
-        hint.setText("\nЗапустите мост на компьютере\n(npm start в папке bridge)\nи отсканируйте QR-код из терминала.\n");
+        hint.setText(Lang.s("\\nStart the bridge on your computer\\n(npm start in the bridge folder)\\nand scan the QR code from the terminal.\\n"));
         hint.setTextColor(Color.parseColor("#94a3b8"));
         hint.setTextSize(15);
         hint.setGravity(Gravity.CENTER);
         box.addView(hint);
 
         Button scan = new Button(this);
-        scan.setText("Сканировать QR-код");
+        scan.setText(Lang.s("Scan QR code"));
         scan.setBackgroundColor(Color.parseColor("#16a34a"));
         scan.setTextColor(Color.WHITE);
         scan.setOnClickListener(v -> startScan());
         box.addView(scan);
 
         TextView or = new TextView(this);
-        or.setText("\nили введите код с экрана ПК:\n");
+        or.setText(Lang.s("\\nor enter the code from the PC screen:\\n"));
         or.setTextColor(Color.parseColor("#94a3b8"));
         or.setGravity(Gravity.CENTER);
         box.addView(or);
 
         EditText code = new EditText(this);
-        code.setHint("например: A1B2C3");
+        code.setHint(Lang.s("e.g.: A1B2C3"));
         code.setHintTextColor(Color.parseColor("#475569"));
         code.setTextColor(Color.WHITE);
         code.setGravity(Gravity.CENTER);
@@ -298,7 +339,7 @@ public class MainActivity extends Activity {
         box.addView(code);
 
         Button manual = new Button(this);
-        manual.setText("Подключиться по коду");
+        manual.setText(Lang.s("Connect with code"));
         manual.setBackgroundColor(Color.parseColor("#2563eb"));
         manual.setTextColor(Color.WHITE);
         manual.setOnClickListener(v -> pairByCode(code.getText().toString().trim()));
@@ -319,7 +360,7 @@ public class MainActivity extends Activity {
         if (pairStatus == null) return;
         String host = prefs.getString("host", null);
         if (host != null && pairStatus.getText().length() == 0) {
-            pairStatus.setText("Мост найден: " + host);
+            pairStatus.setText(Lang.s("Bridge found: ") + host);
         }
     }
 
@@ -327,28 +368,102 @@ public class MainActivity extends Activity {
         runOnUiThread(() -> { if (pairStatus != null) pairStatus.setText(s); });
     }
 
+    /** QR-сканер: встроенный ZXing, Play Services не нужны. */
     private void startScan() {
-        GmsBarcodeScannerOptions opts = new GmsBarcodeScannerOptions.Builder()
-                .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
-                .build();
-        GmsBarcodeScanner scanner = GmsBarcodeScanning.getClient(this, opts);
-        scanner.startScan()
-                .addOnSuccessListener(barcode -> {
-                    try {
-                        JSONObject j = new JSONObject(barcode.getRawValue());
-                        if (j.optInt("ob", j.optInt("cb", 0)) != 1) throw new Exception("не тот QR");
-                        pair(j.getString("host"), j.optInt("port", 8890),
-                                j.getString("code"), j.optString("fp", null));
-                    } catch (Exception e) {
-                        setPairStatus("Это не QR-код OpenCode Mobile");
-                    }
-                })
-                .addOnFailureListener(e -> setPairStatus("Сканер недоступен: " + e.getMessage()));
+        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.CAMERA}, REQ_CAMERA);
+            return;
+        }
+        showScanner();
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQ_CAMERA) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                showScanner();
+            } else {
+                setPairStatus(Lang.s("No camera access — enter the code from the PC screen manually"));
+            }
+        }
+        // requestCode 1 (уведомления): обработки не было и нет — молча игнорируем.
+    }
+
+    private void showScanner() {
+        qrHandled = false;
+        qrView = new DecoratedBarcodeView(this);
+        qrView.getBarcodeView().setDecoderFactory(new DefaultDecoderFactory(
+                java.util.Collections.singletonList(BarcodeFormat.QR_CODE)));
+        qrView.setStatusText(Lang.s("Point the camera at the QR code on the PC screen"));
+        FrameLayout root = new FrameLayout(this);
+        root.addView(qrView, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        Button cancel = new Button(this);
+        cancel.setText(Lang.s("Cancel"));
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+        lp.bottomMargin = 64;
+        root.addView(cancel, lp);
+        cancel.setOnClickListener(v -> hideScanner());
+        setContentView(root);
+        qrShowing = true;
+        qrView.resume();
+        qrView.decodeContinuous(new BarcodeCallback() {
+            @Override
+            public void barcodeResult(BarcodeResult result) {
+                if (qrHandled || result == null || result.getText() == null) return;
+                handleQrText(result.getText());
+            }
+        });
+    }
+
+    private void hideScanner() {
+        qrShowing = false;
+        if (qrView != null) {
+            try { qrView.pause(); } catch (Exception ignored) {}
+            qrView = null;
+        }
+        buildPairUi();
+    }
+
+    private void handleQrText(String raw) {
+        try {
+            JSONObject j = new JSONObject(raw);
+            if (j.optInt("ob", j.optInt("cb", 0)) != 1) throw new Exception(Lang.s("not our QR"));
+            qrHandled = true;
+            qrShowing = false;
+            if (qrView != null) {
+                try { qrView.pause(); } catch (Exception ignored) {}
+            }
+            pair(j.getString("host"), j.optInt("port", 8890),
+                    j.getString("code"), j.optString("fp", null));
+            // дальше commitPairing → recreate, экран сканера уйдёт сам
+        } catch (Exception e) {
+            if (qrView != null) qrView.setStatusText(Lang.s("Not an OpenCode Mobile QR code"));
+        }
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        if (qrShowing && qrView != null) {
+            try { qrView.pause(); } catch (Exception ignored) {}
+        }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (qrShowing && qrView != null) {
+            try { qrView.resume(); } catch (Exception ignored) {}
+        }
     }
 
     /** Обмен кода сопряжения на постоянный токен + пиннинг сертификата. */
     private void pair(String host, int port, String code, String expectedFp) {
-        setPairStatus("Сопряжение…");
+        setPairStatus(Lang.s("Pairing…"));
         new Thread(() -> {
             try {
                 // QR: отпечаток уже проверен вне канала → пиннится expectedFp.
@@ -367,12 +482,12 @@ public class MainActivity extends Activity {
                         .post(RequestBody.create(body.toString(), MediaType.get("application/json")))
                         .build();
                 try (Response resp = client.newCall(req).execute()) {
-                    if (resp.code() == 403) { setPairStatus("Неверный код. Проверьте код в терминале ПК."); return; }
-                    if (!resp.isSuccessful()) { setPairStatus("Ошибка моста: HTTP " + resp.code()); return; }
+                    if (resp.code() == 403) { setPairStatus(Lang.s("Wrong code. Check the code in the PC terminal.")); return; }
+                    if (!resp.isSuccessful()) { setPairStatus(Lang.s("Bridge error: HTTP ") + resp.code()); return; }
                     JSONObject j = new JSONObject(resp.body().string());
                     String realFp = expectedFp != null ? expectedFp : seen.get();
                     if (realFp == null || realFp.isEmpty()) {
-                        setPairStatus("Не удалось получить сертификат моста"); return;
+                        setPairStatus(Lang.s("Could not get the bridge certificate")); return;
                     }
                     BridgeStore.Bridge b = new BridgeStore.Bridge();
                     b.token = j.getString("token");
@@ -389,7 +504,7 @@ public class MainActivity extends Activity {
                     }
                 }
             } catch (Exception e) {
-                setPairStatus("Не удалось: " + e.getMessage());
+                setPairStatus(Lang.s("Failed: ") + e.getMessage());
             }
         }, "pair").start();
     }
@@ -398,14 +513,14 @@ public class MainActivity extends Activity {
     private void confirmFingerprint(BridgeStore.Bridge b) {
         String shown = b.fp.length() >= 16 ? b.fp.substring(0, 16) : b.fp;
         new AlertDialog.Builder(this)
-                .setTitle("Проверьте отпечаток")
-                .setMessage("Отпечаток сертификата этого компьютера:\n\n" + shown + "\n\n"
-                        + "Он совпадает с тем, что показан в терминале на ПК\n"
-                        + "(строка «Отпечаток сертификата»)?\n\n"
-                        + "Если НЕ совпадает — возможен перехват в сети, не подключайтесь.")
-                .setPositiveButton("Совпадает", (d, w) -> commitPairing(b))
-                .setNegativeButton("Нет", (d, w) ->
-                        setPairStatus("Отменено: отпечаток не подтверждён"))
+                .setTitle(Lang.s("Verify the fingerprint"))
+                .setMessage(Lang.s("This computer’s certificate fingerprint:\\n\\n") + shown + "\n\n"
+                        + Lang.s("Does it match what the PC terminal shows\\n")
+                        + Lang.s("(the “certificate fingerprint” line)?\\n\\n")
+                        + Lang.s("If it does NOT match — the network may be intercepted, do not connect."))
+                .setPositiveButton(Lang.s("Matches"), (d, w) -> commitPairing(b))
+                .setNegativeButton(Lang.s("No"), (d, w) ->
+                        setPairStatus(Lang.s("Cancelled: fingerprint not confirmed")))
                 .setCancelable(false)
                 .show();
     }
@@ -415,6 +530,21 @@ public class MainActivity extends Activity {
         startForegroundService(new Intent(MainActivity.this, BridgeService.class)
                 .setAction(BridgeService.ACTION_RECONNECT));
         runOnUiThread(this::recreate); // перезапуск на основной экран
+    }
+
+    /** Apply a new UI language: re-register channels (the system caches their
+     *  names) and rebuild the activity. Service picks the language up live. */
+    private void recreateWithFreshChannels() {
+        android.app.NotificationManager nm =
+                getSystemService(android.app.NotificationManager.class);
+        if (nm != null) {
+            try {
+                nm.deleteNotificationChannel(BridgeService.CH_STATUS);
+                nm.deleteNotificationChannel(BridgeService.CH_EVENTS);
+            } catch (Exception ignored) {}
+        }
+        BridgeService.createChannels(this);
+        recreate();
     }
 
     // ---------------------------------------------- сопряжение по коду: цель
@@ -433,13 +563,13 @@ public class MainActivity extends Activity {
 
     /** Сопряжение по коду: цель — новый (несопряжённый) ПК, найденный в сети. */
     private void pairByCode(String code) {
-        if (code.isEmpty()) { setPairStatus("Введите код с экрана ПК"); return; }
+        if (code.isEmpty()) { setPairStatus(Lang.s("Enter the code from the PC screen")); return; }
         java.util.List<JSONObject> cand = unpairedDiscovered();
         if (cand.isEmpty()) {
             // ещё ни одного сопряжения — сервис кладёт адрес найденного моста в prefs
             String host = store.list().isEmpty() ? prefs.getString("host", null) : null;
             if (host == null) {
-                setPairStatus("Новый компьютер в сети не найден — подождите пару секунд или используйте QR");
+                setPairStatus(Lang.s("No new computer found on the network — wait a couple of seconds or use QR"));
                 return;
             }
             pair(host, prefs.getInt("port", 8890), code, null);
@@ -456,7 +586,7 @@ public class MainActivity extends Activity {
             names[i] = cand.get(i).optString("name") + "  (" + cand.get(i).optString("host") + ")";
         }
         new AlertDialog.Builder(this)
-                .setTitle("К какому компьютеру подключиться?")
+                .setTitle(Lang.s("Which computer to connect to?"))
                 .setItems(names, (dlg, which) -> {
                     JSONObject d = cand.get(which);
                     pair(d.optString("host"), d.optInt("port", 8890), code, null);
@@ -484,15 +614,15 @@ public class MainActivity extends Activity {
             // фактический адрес: на туннеле сайдкар сообщает реальный адрес пира
             String a = lastPathAddr != null && !lastPathAddr.isEmpty() ? ": " + lastPathAddr : "";
             switch (lastPath) {
-                case "inet-direct": return "через интернет, p2p напрямую" + a;
-                case "inet-relay": return "через интернет, relay" + a;
-                case "inet-": case "inet-mixed": case "inet": return "через интернет" + a;
-                default: return "в сети: " + prefs.getString("host", "?");
+                case "inet-direct": return Lang.s("over the internet, direct p2p") + a;
+                case "inet-relay": return Lang.s("over the internet, relay") + a;
+                case "inet-": case "inet-mixed": case "inet": return Lang.s("over the internet") + a;
+                default: return Lang.s(" on network: ") + prefs.getString("host", "?");
             }
         }
         JSONObject d = discoveredByFp(b.fp);
-        if (d != null) return "в сети: " + d.optString("host");
-        return b.host != null ? "не в сети (последний адрес: " + b.host + ")" : "не в сети";
+        if (d != null) return Lang.s(" on network: ") + d.optString("host");
+        return b.host != null ? Lang.s("offline (last address: ") + b.host + ")" : Lang.s("offline");
     }
 
     // --- палитра web-интерфейса: тёмно-синий фон, синие акценты ---
@@ -574,22 +704,22 @@ public class MainActivity extends Activity {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
 
-        TextView ch = themedText("Компьютеры", C_TEXT, 16);
+        TextView ch = themedText(Lang.s("Computers"), C_TEXT, 16);
         ch.setTypeface(null, Typeface.BOLD);
         ch.setPadding(0, 0, 0, dp(2));
         box.addView(ch);
 
         String pathDesc;
         switch (lastPath) {
-            case "lan": pathDesc = "по WiFi (локальная сеть)"; break;
-            case "inet-direct": pathDesc = "через интернет: p2p напрямую"; break;
-            case "inet-relay": pathDesc = "через интернет: relay-сервер"; break;
-            case "inet-": case "inet-mixed": pathDesc = "через интернет"; break;
+            case "lan": pathDesc = Lang.s("over WiFi (local network)"); break;
+            case "inet-direct": pathDesc = Lang.s("over the internet: direct p2p"); break;
+            case "inet-relay": pathDesc = Lang.s("over the internet: relay server"); break;
+            case "inet-": case "inet-mixed": pathDesc = Lang.s("over the internet"); break;
             default: pathDesc = ""; break;
         }
         TextView state = themedText(lastConnected
-                ? "Подключено " + pathDesc
-                : "Нет подключения — идёт поиск…", C_MUTED, 13);
+                ? Lang.s("Connected ") + pathDesc
+                : Lang.s("Not connected — searching…"), C_MUTED, 13);
         state.setPadding(0, 0, 0, dp(8));
         box.addView(state);
 
@@ -628,22 +758,22 @@ public class MainActivity extends Activity {
             del.setMinimumWidth(dp(44));
             del.setPadding(dp(10), dp(6), dp(10), dp(6));
             del.setOnClickListener(v -> new AlertDialog.Builder(this)
-                    .setMessage("Удалить «" + b.name + "» из приложения?\n" +
-                            "Сопряжение на самом ПК останется (отзыв — opencode-mobile --device).")
-                    .setPositiveButton("Удалить", (d, w) -> {
+                    .setMessage(Lang.s("Delete “") + b.name + Lang.s("” from the app?\\n") +
+                            Lang.s("Pairing on the PC itself stays (revoke via opencode-mobile --device)."))
+                    .setPositiveButton(Lang.s("Delete"), (d, w) -> {
                         boolean wasActive = b.fp != null && b.fp.equalsIgnoreCase(store.activeFp());
                         store.remove(b.fp);
                         if (wasActive) switchBridge();
                         else showPcSettings();
                     })
-                    .setNegativeButton("Отмена", null)
+                    .setNegativeButton(Lang.s("Cancel"), null)
                     .show());
             row.addView(del);
             box.addView(row);
 
             // опциональный доступ через интернет (p2p iroh); LAN всегда в приоритете
             android.widget.CheckBox inet = new android.widget.CheckBox(this);
-            inet.setText("разрешить через интернет (p2p)");
+            inet.setText(Lang.s("allow over the internet (p2p)"));
             inet.setTextSize(13);
             inet.setTextColor(Color.parseColor(C_MUTED));
             inet.setButtonTintList(blue);
@@ -659,21 +789,21 @@ public class MainActivity extends Activity {
             });
             box.addView(inet);
             if (b.internet && b.nodeTicket == null) {
-                box.addView(themedText("Нет p2p-адреса этого ПК: подключитесь к нему по WiFi,\n" +
-                        "включив на нём интернет-доступ (opencode-mobile --device → i).", "#f59e0b", 12));
+                box.addView(themedText(Lang.s("No p2p address for this PC: connect to it over WiFi,\\n") +
+                        Lang.s("after enabling internet access on it (opencode-mobile --device → i)."), "#f59e0b", 12));
             }
         }
 
         if (list.isEmpty()) {
-            box.addView(themedText("Нет сопряжённых компьютеров.", C_MUTED, 14));
+            box.addView(themedText(Lang.s("No paired computers."), C_MUTED, 14));
         }
 
-        Button add = themedBtn("＋ Добавить компьютер", C_GREEN);
+        Button add = themedBtn(Lang.s("＋ Add computer"), C_GREEN);
         add.setOnClickListener(v -> { pcDialog.dismiss(); showAddPc(); });
         box.addView(add);
 
         // ------------------------------------------ фоновая связь (батарея)
-        TextView bh = themedText("Фоновая связь", C_TEXT, 16);
+        TextView bh = themedText(Lang.s("Background connection"), C_TEXT, 16);
         bh.setTypeface(null, Typeface.BOLD);
         bh.setPadding(0, dp(18), 0, dp(2));
         box.addView(bh);
@@ -681,9 +811,9 @@ public class MainActivity extends Activity {
         android.widget.RadioGroup rg = new android.widget.RadioGroup(this);
         String cur = prefs.getString("bgMode", "always");
         String[][] modes = {
-                {"always", "Всегда на связи"},
-                {"wifi", "В фоне — только по WiFi"},
-                {"app", "Только при открытом приложении"},
+                {"always", Lang.s("Always connected")},
+                {"wifi", Lang.s("Background: WiFi only")},
+                {"app", Lang.s("Only while the app is open")},
         };
         for (String[] m : modes) {
             android.widget.RadioButton r = new android.widget.RadioButton(this);
@@ -706,17 +836,59 @@ public class MainActivity extends Activity {
         }
         box.addView(rg);
         box.addView(themedText(
-                "В экономных режимах уведомления приходят только пока есть связь.",
+                Lang.s("In battery-saving modes notifications arrive only while connected."),
                 C_MUTED, 12));
 
+        // Проверка экономии батареи + переход в её отключение.
+        // Статус свежий при каждом открытии настроек (экран пересобирается).
+        boolean battOk = isBattExempt();
+        box.addView(themedText(battOk
+                        ? Lang.s("✓ Battery optimization off — background connection allowed.")
+                        : Lang.s("⚠ Battery optimization is on — connection will drop ")
+                        + Lang.s("with the screen off."),
+                battOk ? C_GREEN : "#f59e0b", 13));
+        if (!battOk) {
+            Button batt = themedBtn(Lang.s("Battery settings"), C_GREEN);
+            batt.setOnClickListener(v -> openBatterySettings());
+            box.addView(batt);
+        }
+
+        // ------------------------------------------------------ language
+        TextView lh = themedText(Lang.s("Language"), C_TEXT, 16);
+        lh.setTypeface(null, Typeface.BOLD);
+        lh.setPadding(0, dp(18), 0, dp(2));
+        box.addView(lh);
+
+        android.widget.RadioGroup lg = new android.widget.RadioGroup(this);
+        String langCur = Lang.cur();
+        String[][] langs = {
+                {"ru", "Русский"},
+                {"en", "English"},
+        };
+        for (String[] lm : langs) {
+            android.widget.RadioButton r = new android.widget.RadioButton(this);
+            r.setId(View.generateViewId());
+            r.setText(lm[1]);
+            r.setTextColor(Color.parseColor(C_TEXT));
+            r.setTextSize(14);
+            r.setButtonTintList(blue);
+            r.setChecked(langCur.equals(lm[0]));
+            r.setOnClickListener(v -> {
+                Lang.setLang(MainActivity.this, lm[0]);
+                recreateWithFreshChannels();
+            });
+            lg.addView(r);
+        }
+        box.addView(lg);
+
         // ------------------------------------------------------ безопасность
-        TextView sh = themedText("Безопасность", C_TEXT, 16);
+        TextView sh = themedText(Lang.s("Security"), C_TEXT, 16);
         sh.setTypeface(null, Typeface.BOLD);
         sh.setPadding(0, dp(16), 0, dp(2));
         box.addView(sh);
 
         android.widget.CheckBox bio = new android.widget.CheckBox(this);
-        bio.setText("Вход по биометрии или PIN");
+        bio.setText(Lang.s("Biometric or PIN unlock"));
         bio.setTextColor(Color.parseColor(C_TEXT));
         bio.setTextSize(14);
         bio.setButtonTintList(blue);
@@ -728,7 +900,7 @@ public class MainActivity extends Activity {
                 if (km == null || !km.isDeviceSecure()) {
                     v.setChecked(false);
                     android.widget.Toast.makeText(this,
-                            "Сначала настройте блокировку экрана (PIN или биометрию)",
+                            Lang.s("Set up a screen lock first (PIN or biometrics)"),
                             android.widget.Toast.LENGTH_LONG).show();
                     return;
                 }
@@ -739,11 +911,11 @@ public class MainActivity extends Activity {
         });
         box.addView(bio);
 
-        Button close = themedBtn("Закрыть", C_GRAY);
+        Button close = themedBtn(Lang.s("Close"), C_GRAY);
         close.setOnClickListener(v -> { if (pcDialog != null) pcDialog.dismiss(); });
         box.addView(close);
 
-        pcDialog = themedDialog("Настройки", box);
+        pcDialog = themedDialog(Lang.s("Settings"), box);
     }
 
     /** Диалог добавления нового ПК: QR или код с экрана. */
@@ -751,19 +923,19 @@ public class MainActivity extends Activity {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
 
-        box.addView(themedText("На новом ПК выполните opencode-mobile --qr\n" +
-                "и отсканируйте QR-код, либо введите код:", C_MUTED, 14));
+        box.addView(themedText(Lang.s("On the new PC run opencode-mobile --qr\\n") +
+                Lang.s("then scan the QR code or enter the code:"), C_MUTED, 14));
 
-        Button scan = themedBtn("Сканировать QR-код", C_GREEN);
+        Button scan = themedBtn(Lang.s("Scan QR code"), C_GREEN);
         scan.setOnClickListener(v -> startScan());
         box.addView(scan);
 
         java.util.List<JSONObject> cand = unpairedDiscovered();
         StringBuilder sb = new StringBuilder();
         if (cand.isEmpty()) {
-            sb.append("Новых компьютеров в сети пока не видно.");
+            sb.append(Lang.s("No new computers visible on the network yet."));
         } else {
-            sb.append("Найдено в сети:");
+            sb.append(Lang.s("Found on network:"));
             for (JSONObject d : cand) {
                 sb.append("\n• ").append(d.optString("name")).append("  (").append(d.optString("host")).append(")");
             }
@@ -773,7 +945,7 @@ public class MainActivity extends Activity {
         box.addView(found);
 
         EditText code = new EditText(this);
-        code.setHint("код, например A1B2C3");
+        code.setHint(Lang.s("code, e.g. A1B2C3"));
         code.setHintTextColor(Color.parseColor(C_GRAY));
         code.setTextColor(Color.parseColor(C_TEXT));
         android.graphics.drawable.GradientDrawable inputBg = rounded(C_INPUT, 8);
@@ -787,7 +959,7 @@ public class MainActivity extends Activity {
         code.setLayoutParams(clp);
         box.addView(code);
 
-        Button byCode = themedBtn("Подключиться по коду", C_BLUE);
+        Button byCode = themedBtn(Lang.s("Connect with code"), C_BLUE);
         byCode.setOnClickListener(v -> pairByCode(code.getText().toString().trim()));
         box.addView(byCode);
 
@@ -796,10 +968,10 @@ public class MainActivity extends Activity {
         pairStatus.setPadding(0, dp(8), 0, 0);
         box.addView(pairStatus);
 
-        Button close = themedBtn("Закрыть", C_GRAY);
+        Button close = themedBtn(Lang.s("Close"), C_GRAY);
         box.addView(close);
 
-        AlertDialog d = themedDialog("Добавить компьютер", box);
+        AlertDialog d = themedDialog(Lang.s("Add computer"), box);
         close.setOnClickListener(v -> { pairStatus = null; d.dismiss(); });
         d.setOnCancelListener(x -> pairStatus = null);
     }
@@ -958,8 +1130,8 @@ public class MainActivity extends Activity {
             public boolean onJsConfirm(WebView v, String url, String message, JsResult result) {
                 new AlertDialog.Builder(MainActivity.this)
                         .setMessage(message)
-                        .setPositiveButton("Да", (d, w) -> result.confirm())
-                        .setNegativeButton("Отмена", (d, w) -> result.cancel())
+                        .setPositiveButton(Lang.s("Yes"), (d, w) -> result.confirm())
+                        .setNegativeButton(Lang.s("Cancel"), (d, w) -> result.cancel())
                         .setOnCancelListener(d -> result.cancel())
                         .show();
                 return true;
@@ -981,7 +1153,7 @@ public class MainActivity extends Activity {
         splashBox.setGravity(Gravity.CENTER);
         splashText = new TextView(this);
         BridgeStore.Bridge act = store.active();
-        splashText.setText("Ищу «" + (act != null ? act.name : "мост") + "»…");
+        splashText.setText(Lang.s("Looking for “") + (act != null ? act.name : Lang.s("bridge")) + "»…");
         splashText.setTextColor(Color.parseColor("#94a3b8"));
         splashText.setTextSize(16);
         splashText.setGravity(Gravity.CENTER);
@@ -990,10 +1162,10 @@ public class MainActivity extends Activity {
         splashBox.addView(splashText);
         // оффлайн-экран — полноценный: настройки и добавление ПК доступны всегда
         Button pcs = new Button(this);
-        pcs.setText("🖥 Компьютеры…");
+        pcs.setText(Lang.s("🖥 Computers…"));
         pcs.setOnClickListener(v -> showPcSettings());
         Button addPc = new Button(this);
-        addPc.setText("＋ Добавить компьютер");
+        addPc.setText(Lang.s("＋ Add computer"));
         addPc.setOnClickListener(v -> showAddPc());
         for (Button btn : new Button[]{pcs, addPc}) {
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
@@ -1157,7 +1329,7 @@ public class MainActivity extends Activity {
                     String token = prefs.getString("token", null);
                     String fp = prefs.getString("fp", null);
                     if (host == null || token == null || sttFile == null || !sttFile.exists()) {
-                        throw new Exception("нет соединения или записи");
+                        throw new Exception(Lang.s("no connection or entry"));
                     }
                     byte[] audio = Files.readAllBytes(sttFile.toPath());
                     OkHttpClient c = Tls.buildClient(fp).newBuilder()
