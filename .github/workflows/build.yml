@@ -12,7 +12,7 @@ jobs:
     name: opencode-tunnel (linux x86_64)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - name: Build tunnel (release)
         run: cargo build --release --locked
@@ -21,7 +21,7 @@ jobs:
         run: |
           mkdir -p bridge/bin
           cp tunnel/target/release/opencode-tunnel bridge/bin/opencode-tunnel
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: opencode-tunnel-linux-x86_64
           path: bridge/bin/opencode-tunnel
@@ -32,10 +32,10 @@ jobs:
     env:
       ANDROID_NDK_HOME: ${{ github.workspace }}/android-sdk/ndk/26.3.11579264
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 17
@@ -55,7 +55,7 @@ jobs:
         with:
           targets: aarch64-linux-android
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: npm
@@ -86,7 +86,7 @@ jobs:
           ./gradlew assembleDebug --no-daemon
         working-directory: android
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: opencode-bridge-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
